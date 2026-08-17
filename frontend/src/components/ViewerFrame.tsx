@@ -1,0 +1,20 @@
+export default function ViewerFrame({ caseId }: { caseId: string }) {
+  const url = `http://${window.location.hostname}:8081/?case=${caseId}`
+
+  return (
+    <div className="card overflow-hidden">
+      <div className="px-4 py-3 border-b flex items-center justify-between">
+        <div className="font-semibold">Viewer 3D</div>
+        <a href={url} target="_blank" rel="noreferrer" className="text-blue-600 text-sm hover:underline">
+          Apri in nuova finestra
+        </a>
+      </div>
+
+      <iframe
+        src={url}
+        className="w-full h-[700px] border-0"
+        title="Viewer 3D OpenFOAM"
+      />
+    </div>
+  )
+}
