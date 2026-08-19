@@ -5,6 +5,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
+from starlette.background import BackgroundTask
 from pydantic import BaseModel
 
 from app.config import settings
@@ -102,6 +103,11 @@ def delete_file(case_id: str, rel_path: str):
     case_dir = case_dir_or_404(case_id)
     target = safe_join(case_dir, rel_path)
 
+    # ponytail: rel_path="." risolve a case_dir stessa -> rmtree cancella
+    # l'intero caso bypassando l'endpoint dedicato DELETE /cases/{id}.
+    if target == case_dir:
+        raise HTTPException(status_code=400, detail="Non puoi cancellare la radice del caso")
+
     if not target.exists():
         raise HTTPException(status_code=404, detail="File non trovato")
 
@@ -158,4 +164,10 @@ def download_all(case_id: str):
             if p.is_file():
                 zf.write(p, p.relative_to(case_dir))
 
-    return FileResponse(tmp.name, filename=f"{case_id}.zip")
+    return FileResponse(
+        tmp.name,
+        filename=f"{case_id}.zip",
+        # ponytail: senza background delete ogni download-all lascia uno zip
+        # orfano in /tmp. Su un'app che gira mesi, disco pieno garantito.
+        background=BackgroundTask(lambda: Path(tmp.name).unlink(missing_ok=True)),
+    )

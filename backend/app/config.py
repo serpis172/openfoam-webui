@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     default_processors: int = 4
 
     enable_terminal: bool = False
+    api_key: str = ""
     cors_origins: str = "*"
     allowed_geometry_extensions: str = ".stl,.obj,.vtk,.vtp"
 

@@ -1,10 +1,11 @@
+import asyncio
 import json
 from pathlib import Path
 
 import redis
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.celery_app import celery_app
 from app.config import settings
@@ -16,7 +17,7 @@ router = APIRouter(tags=["jobs"])
 
 class RunRequest(BaseModel):
     case_id: str
-    processors: int | None = None
+    processors: int | None = Field(default=None, ge=1, le=64)
 
 
 def redis_client():
@@ -57,6 +58,36 @@ def run_case(payload: RunRequest):
 
     task = celery_app.send_task(
         "tasks.run_openfoam_case",
+        args=[payload.case_id],
+    )
+
+    update_last_job(case_dir, task.id)
+
+    return {
+        "job_id": task.id,
+        "case_id": payload.case_id,
+    }
+
+
+@router.post("/mesh")
+def run_mesh_only(payload: RunRequest):
+    """Job leggero: solo mesh + checkMesh + preview WebGL, niente solve.
+    Usato dal wizard/workspace per far vedere la mesh prima che l'utente
+    si impegni in una run che può durare ore."""
+    case_dir = case_dir_or_404(payload.case_id)
+
+    config_file = case_dir / "config.json"
+    if not config_file.exists():
+        raise HTTPException(status_code=400, detail="Configurazione mancante")
+
+    config = json.loads(config_file.read_text())
+
+    if payload.processors:
+        config.setdefault("mesh", {})["processors"] = payload.processors
+        config_file.write_text(json.dumps(config, indent=2))
+
+    task = celery_app.send_task(
+        "tasks.generate_mesh_only",
         args=[payload.case_id],
     )
 
@@ -154,31 +185,43 @@ def case_report(case_id: str):
     }
 
 
+@router.get("/case/{case_id}/mesh-report")
+def case_mesh_report(case_id: str):
+    """Stats della mesh (celle, non-ortogonalità, skewness, stato del
+    preview) scritte subito dopo il meshing, senza aspettare una run
+    completa: sono già disponibili anche solo dopo POST /jobs/mesh."""
+    case_dir = case_dir_or_404(case_id)
+    report_file = case_dir / "postProcessing/mesh_report.json"
+
+    if not report_file.exists():
+        return {"case_id": case_id, "mesh_report": None}
+
+    return {
+        "case_id": case_id,
+        "mesh_report": json.loads(report_file.read_text()),
+    }
+
+
 @router.get("/case/{case_id}/stream")
-def case_stream(case_id: str):
+def case_stream(request: Request, case_id: str):
     case_dir = case_dir_or_404(case_id)
 
-    def event_stream():
-        import time
+    async def event_stream():
+        # ponytail: async + asyncio.sleep, non thread bloccato per client.
+        # Disconnect check + tetto ore evita stream orfani infiniti.
+        max_iterations = 3600  # ~2h a 2s/iterazione, poi il client rifà GET
+        for _ in range(max_iterations):
+            if await request.is_disconnected():
+                break
 
-        while True:
             logs = sorted(case_dir.glob("log.*"))
-            payload = {
-                "case_id": case_id,
-                "logs": [],
-            }
+            payload = {"case_id": case_id, "logs": []}
 
             for log in logs[-3:]:
                 lines = log.read_text(errors="ignore").splitlines()
-                payload["logs"].append({
-                    "name": log.name,
-                    "tail": lines[-20:],
-                })
+                payload["logs"].append({"name": log.name, "tail": lines[-20:]})
 
             yield f"data: {json.dumps(payload)}\n\n"
-            time.sleep(2)
+            await asyncio.sleep(2)
 
-    return StreamingResponse(
-        event_stream(),
-        media_type="text/event-stream",
-    )
+    return StreamingResponse(event_stream(), media_type="text/event-stream")

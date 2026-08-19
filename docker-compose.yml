@@ -24,6 +24,8 @@ services:
       - TEMPLATES_DIR=/app/templates
     volumes:
       - cases:/data
+      - ./frontend/dist:/app/static:ro
+      - ./backend/templates:/app/templates
     depends_on:
       redis:
         condition: service_healthy
@@ -59,8 +61,8 @@ services:
   viz:
     build: ./viz
     restart: unless-stopped
-    profiles:
-      - viz
+    # niente "profiles: [viz]": il viewer 3D deve essere sempre attivo,
+    # non un extra opzionale da abilitare a mano.
     env_file:
       - .env
     volumes:

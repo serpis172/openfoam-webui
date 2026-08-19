@@ -2,7 +2,7 @@ import Editor from '@monaco-editor/react'
 import { FileText, Save, Trash2 } from 'lucide-react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
-import { api } from '../api'
+import { api, FileItem } from '../api'
 
 export default function FileBrowser({ caseId }: { caseId: string }) {
   const queryClient = useQueryClient()
@@ -51,7 +51,7 @@ export default function FileBrowser({ caseId }: { caseId: string }) {
         <h3 className="font-semibold mb-3">File del caso</h3>
 
         <div className="space-y-1 max-h-[600px] overflow-auto">
-          {files.map((file: any) => (
+          {files.map((file: FileItem) => (
             <div
               key={file.path}
               className={`flex items-center justify-between px-3 py-2 rounded-lg cursor-pointer ${

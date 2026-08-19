@@ -12,7 +12,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 WORKDIR /app
 
-COPY trame_app.py .
+COPY trame_app.py case_registry.py .
 
 ENTRYPOINT ["xvfb-run", "-a", "python", "trame_app.py"]
 CMD ["--port", "8080"]

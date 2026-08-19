@@ -16,6 +16,16 @@ CASE_ROOT = Path(os.getenv("CASE_ROOT", "/data/cases"))
 OPENFOAM_BASHRC = os.getenv("OPENFOAM_BASHRC", "/opt/openfoam2406/etc/bashrc")
 JOB_TIMEOUT_SECONDS = int(os.getenv("JOB_TIMEOUT_SECONDS", "86400"))
 
+# ponytail: config.json puo' essere sovrascritto a mano tramite l'editor di
+# testo (PUT /files/{case_id}/text/config.json), che bypassa la validazione
+# pydantic di models.py. Questo e' l'unico punto dove "solver" diventa
+# argv[0] di un subprocess reale: e' qui che va bloccato, non solo a monte.
+ALLOWED_SOLVERS = {
+    "simpleFoam", "pimpleFoam", "interFoam", "pisoFoam", "icoFoam",
+    "rhoSimpleFoam", "rhoPimpleFoam", "buoyantSimpleFoam",
+}
+MAX_PROCESSORS = 64
+
 celery = Celery("tasks", broker=REDIS_URL, backend=REDIS_URL)
 
 ACTIVE_PROCESSES = {}
@@ -159,22 +169,13 @@ def parse_check_mesh(case_dir: Path):
     return report
 
 
-@celery.task(bind=True, name="tasks.run_openfoam_case")
-def run_openfoam_case(self, case_id):
-    job_id = self.request.id
-    case_dir = CASE_ROOT / case_id
-
-    if not case_dir.exists():
-        raise FileNotFoundError(f"Caso non trovato: {case_id}")
-
-    config = json.loads((case_dir / "config.json").read_text())
-
+def _generate_mesh(self, job_id: str, case_dir: Path, config: dict) -> dict:
+    """Meshing + checkMesh + preview WebGL: fattorizzato fuori da
+    run_openfoam_case perche' serve anche al job "solo mesh" (l'utente
+    vuole vedere/validare la mesh prima di lanciare una simulazione
+    intera, che puo' durare ore)."""
     mesh = config.get("mesh", {})
     run_settings = config.get("run", {})
-    physics = config.get("physics", {})
-
-    solver = physics.get("solver", "simpleFoam")
-    processors = int(mesh.get("processors", 1))
 
     if run_settings.get("clean_start", True):
         clean_case(case_dir)
@@ -191,11 +192,93 @@ def run_openfoam_case(self, case_id):
         if not stl_files:
             raise RuntimeError("Nessun file STL trovato in constant/triSurface")
 
+        run_step(self, job_id, case_dir, "blockMesh", ["blockMesh"])
         run_step(self, job_id, case_dir, "surfaceFeatureExtract", ["surfaceFeatureExtract"])
         run_step(self, job_id, case_dir, "snappyHexMesh", ["snappyHexMesh", "-overwrite"])
 
-    if run_settings.get("run_check_mesh", True):
-        run_step(self, job_id, case_dir, "checkMesh", ["checkMesh"])
+    run_step(self, job_id, case_dir, "checkMesh", ["checkMesh"])
+
+    mesh_report = parse_check_mesh(case_dir)
+    mesh_report["mesh_type"] = mesh_type
+    mesh_report["generated_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+    post_dir = case_dir / "postProcessing"
+    post_dir.mkdir(exist_ok=True)
+    (post_dir / "mesh_report.json").write_text(json.dumps(mesh_report, indent=2))
+
+    # foamToVTK sulla sola mesh (nessun campo risolto ancora, ma la
+    # geometria si', e' quello che ci serve sia per il viewer trame
+    # esistente sia per il preview WebGL qui sotto)
+    run_step(self, job_id, case_dir, "foamToVTK", ["foamToVTK", "-latestTime"])
+
+    try:
+        from mesh_export import export_mesh_preview
+
+        vtk_files = sorted(case_dir.glob("VTK/**/*.vt*"))
+        if vtk_files:
+            preview_stats = export_mesh_preview(
+                vtk_files[-1], post_dir / "mesh_preview.gltf"
+            )
+            mesh_report["preview"] = preview_stats
+            (post_dir / "mesh_report.json").write_text(json.dumps(mesh_report, indent=2))
+    except Exception as exc:
+        # ponytail: il preview WebGL e' un extra visivo, non deve far
+        # fallire il job di meshing se pyvista/vtk inciampa su un caso
+        # limite (mesh degenere, 0 celle, ecc.) - la mesh e' comunque
+        # generata e checkMesh ha comunque girato.
+        mesh_report["preview_error"] = str(exc)
+        (post_dir / "mesh_report.json").write_text(json.dumps(mesh_report, indent=2))
+
+    return mesh_report
+
+
+@celery.task(bind=True, name="tasks.generate_mesh_only")
+def generate_mesh_only(self, case_id):
+    """Job leggero: solo mesh + checkMesh + preview, niente solver.
+    Serve al passo "Mesh" del wizard/workspace: l'utente vuole vedere
+    e validare la mesh prima di impegnarsi in una run che puo' durare
+    ore."""
+    job_id = self.request.id
+    case_dir = CASE_ROOT / case_id
+
+    if not case_dir.exists():
+        raise FileNotFoundError(f"Caso non trovato: {case_id}")
+
+    config = json.loads((case_dir / "config.json").read_text())
+    mesh = config.get("mesh", {})
+
+    processors = int(mesh.get("processors", 1))
+    if not (1 <= processors <= MAX_PROCESSORS):
+        raise ValueError(f"processors fuori range (1-{MAX_PROCESSORS}): {processors}")
+
+    mesh_report = _generate_mesh(self, job_id, case_dir, config)
+
+    return {"status": "mesh_completed", "case_id": case_id, "mesh_report": mesh_report}
+
+
+@celery.task(bind=True, name="tasks.run_openfoam_case")
+def run_openfoam_case(self, case_id):
+    job_id = self.request.id
+    case_dir = CASE_ROOT / case_id
+
+    if not case_dir.exists():
+        raise FileNotFoundError(f"Caso non trovato: {case_id}")
+
+    config = json.loads((case_dir / "config.json").read_text())
+
+    mesh = config.get("mesh", {})
+    run_settings = config.get("run", {})
+    physics = config.get("physics", {})
+
+    solver = physics.get("solver", "simpleFoam")
+    if solver not in ALLOWED_SOLVERS:
+        raise ValueError(f"Solver non consentito: {solver!r}")
+
+    processors = int(mesh.get("processors", 1))
+    if not (1 <= processors <= MAX_PROCESSORS):
+        raise ValueError(f"processors fuori range (1-{MAX_PROCESSORS}): {processors}")
+
+    _generate_mesh(self, job_id, case_dir, config)
 
     if processors > 1:
         run_step(self, job_id, case_dir, "decomposePar", ["decomposePar", "-force"])

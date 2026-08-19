@@ -2,15 +2,13 @@ import { useQuery } from '@tanstack/react-query'
 import {
   Activity,
   AlertTriangle,
-  CheckCircle,
-  FileText,
   Play,
   RefreshCw,
   Square,
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useParams } from 'react-router-dom'
-import { api } from '../api'
+import { api, CaseResponse, JobStatusResponse, ResidualsResponse, ValidationResponse, ReportResponse, LogsResponse } from '../api'
 import FileBrowser from '../components/FileBrowser'
 import ResidualsChart from '../components/ResidualsChart'
 import StatusBadge from '../components/StatusBadge'
@@ -31,49 +29,49 @@ export default function CaseView() {
   const [tab, setTab] = useState('Panoramica')
   const [jobId, setJobId] = useState<string | null>(null)
 
-  const caseQuery = useQuery({
+  const caseQuery = useQuery<CaseResponse>({
     queryKey: ['case', caseId],
     queryFn: () => api.getCase(caseId!),
     enabled: !!caseId,
   })
 
-  const jobQuery = useQuery({
+  const jobQuery = useQuery<JobStatusResponse>({
     queryKey: ['job', jobId],
     queryFn: () => api.jobStatus(jobId!),
     enabled: !!jobId,
     refetchInterval: 2000,
   })
 
-  const residualsQuery = useQuery({
+  const residualsQuery = useQuery<ResidualsResponse>({
     queryKey: ['residuals', caseId],
     queryFn: () => api.residuals(caseId!),
     enabled: !!caseId && tab === 'Residui',
     refetchInterval: 3000,
   })
 
-  const validationQuery = useQuery({
+  const validationQuery = useQuery<ValidationResponse>({
     queryKey: ['validation', caseId],
     queryFn: () => api.validate(caseId!),
     enabled: !!caseId && tab === 'Validazione',
   })
 
-  const reportQuery = useQuery({
+  const reportQuery = useQuery<ReportResponse>({
     queryKey: ['report', caseId],
     queryFn: () => api.report(caseId!),
     enabled: !!caseId && tab === 'Report',
   })
 
-  const logsQuery = useQuery({
+  const logsQuery = useQuery<LogsResponse>({
     queryKey: ['logs', caseId],
     queryFn: () => api.logs(caseId!),
     enabled: !!caseId && tab === 'Esecuzione',
     refetchInterval: 3000,
   })
 
-  const meta = (caseQuery.data as any)?.meta
-  const config = (caseQuery.data as any)?.config
-  const jobState = (jobQuery.data as any)?.state || 'UNKNOWN'
-  const jobStep = (jobQuery.data as any)?.info?.step || '-'
+  const meta = caseQuery.data?.meta
+  const config = caseQuery.data?.config
+  const jobState = jobQuery.data?.state || 'UNKNOWN'
+  const jobStep = jobQuery.data?.info?.step || '-'
 
   useEffect(() => {
     if (meta?.last_job_id && !jobId) {
@@ -84,9 +82,9 @@ export default function CaseView() {
   const runCase = async () => {
     if (!caseId) return
 
-    const response: any = await api.runCase(caseId, config?.mesh?.processors)
+    const response = await api.runCase(caseId, config?.mesh?.processors)
     setJobId(response.job_id)
-    setTab('Esecuzione')
+    setSection('esecuzione')
   }
 
   const cancelJob = async () => {
@@ -96,7 +94,7 @@ export default function CaseView() {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-8">
+      <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-3xl font-bold">{meta?.name || caseId}</h1>
           <p className="text-slate-500 mt-1">{meta?.description}</p>
@@ -186,32 +184,32 @@ export default function CaseView() {
             <div className="space-y-4">
               <div
                 className={`p-4 rounded-xl ${
-                  (validationQuery.data as any).valid
+                  validationQuery.data.valid
                     ? 'bg-green-50 text-green-800'
                     : 'bg-red-50 text-red-800'
                 }`}
               >
-                {(validationQuery.data as any).valid
+                {validationQuery.data.valid
                   ? 'Il caso è valido.'
                   : 'Il caso contiene errori.'}
               </div>
 
-              {(validationQuery.data as any).errors.length > 0 && (
+              {validationQuery.data.errors.length > 0 && (
                 <div>
                   <h4 className="font-semibold mb-2">Errori</h4>
                   <ul className="list-disc pl-5 space-y-1 text-red-700">
-                    {(validationQuery.data as any).errors.map((err: string, i: number) => (
+                    {validationQuery.data.errors.map((err: string, i: number) => (
                       <li key={i}>{err}</li>
                     ))}
                   </ul>
                 </div>
               )}
 
-              {(validationQuery.data as any).warnings.length > 0 && (
+              {validationQuery.data.warnings.length > 0 && (
                 <div>
                   <h4 className="font-semibold mb-2">Avvisi</h4>
                   <ul className="list-disc pl-5 space-y-1 text-amber-700">
-                    {(validationQuery.data as any).warnings.map((warn: string, i: number) => (
+                    {validationQuery.data.warnings.map((warn: string, i: number) => (
                       <li key={i}>{warn}</li>
                     ))}
                   </ul>
@@ -239,7 +237,7 @@ export default function CaseView() {
           </div>
 
           <div className="space-y-4">
-            {(logsQuery.data as any)?.logs?.map((log: any) => (
+            {logsQuery.data?.logs?.map((log) => (
               <div key={log.name} className="border rounded-lg p-4">
                 <div className="font-mono text-sm mb-2">{log.name}</div>
                 <a
@@ -266,7 +264,7 @@ export default function CaseView() {
             </button>
           </div>
 
-          <ResidualsChart residuals={(residualsQuery.data as any)?.residuals || {}} />
+          <ResidualsChart residuals={residualsQuery.data?.residuals || {}} />
         </div>
       )}
 
@@ -276,7 +274,7 @@ export default function CaseView() {
 
           {reportQuery.data?.report ? (
             <pre className="bg-slate-900 text-green-300 p-4 rounded-xl overflow-auto text-sm">
-              {JSON.stringify((reportQuery.data as any).report, null, 2)}
+              {JSON.stringify(reportQuery.data.report, null, 2)}
             </pre>
           ) : (
             <div className="text-slate-500">

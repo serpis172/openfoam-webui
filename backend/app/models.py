@@ -1,11 +1,31 @@
 from typing import List, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+# ponytail: whitelist chiuso. Ogni stringa qui finisce cruda in un dict
+# OpenFOAM (system/controlDict, turbulenceProperties) o come argv[0] di
+# un subprocess (worker/tasks.py). Un solver/turbulenceModel arbitrario
+# permette RCE via #codeStream nel dict o exec di binario a piacere.
+# Aggiungere qui, non rimuovere il whitelist, se serve un nuovo solver.
+ALLOWED_SOLVERS = {
+    "simpleFoam", "pimpleFoam", "interFoam", "pisoFoam", "icoFoam",
+    "rhoSimpleFoam", "rhoPimpleFoam", "buoyantSimpleFoam",
+}
+ALLOWED_TURBULENCE_MODELS = {
+    "kOmegaSST", "kEpsilon", "SpalartAllmaras", "realizableKE", "RNGkEpsilon",
+}
 
 
 class CaseCreate(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     solver: str = "simpleFoam"
-    description: str = ""
+    description: str = Field(default="", max_length=2000)
+
+    @field_validator("solver")
+    @classmethod
+    def check_solver(cls, v: str) -> str:
+        if v not in ALLOWED_SOLVERS:
+            raise ValueError(f"Solver non consentito: {v}")
+        return v
 
 
 class CaseMeta(BaseModel):
@@ -30,6 +50,20 @@ class PhysicsConfig(BaseModel):
     end_time: float = 1000.0
     write_interval: float = 100.0
     delta_t: float = 1.0
+
+    @field_validator("solver")
+    @classmethod
+    def check_solver(cls, v: str) -> str:
+        if v not in ALLOWED_SOLVERS:
+            raise ValueError(f"Solver non consentito: {v}")
+        return v
+
+    @field_validator("turbulence")
+    @classmethod
+    def check_turbulence(cls, v: str) -> str:
+        if v not in ALLOWED_TURBULENCE_MODELS:
+            raise ValueError(f"Modello di turbolenza non consentito: {v}")
+        return v
 
 
 class BoundaryCondition(BaseModel):
@@ -57,7 +91,7 @@ class MeshSettings(BaseModel):
     layers: int = 3
     first_layer_thickness: float = 0.001
     growth_ratio: float = 1.2
-    processors: int = 4
+    processors: int = Field(default=4, ge=1, le=64)
 
 
 class FunctionObject(BaseModel):

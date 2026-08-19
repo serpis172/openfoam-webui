@@ -1,0 +1,45 @@
+--- frontend/src/components/ViewerFrame.tsx
++++ frontend/src/components/ViewerFrame.tsx
+@@ -1,5 +1,27 @@
+-export default function ViewerFrame({ caseId }: { caseId: string }) {
+-  const url = `http://${window.location.hostname}:8081/?case=${caseId}`
++export default function ViewerFrame({
++  caseId,
++  compact = false,
++}: {
++  caseId: string
++  /** true quando il viewer e' un pannello agganciato (workspace), non una
++   * card autonoma dentro un tab: niente cornice/header propri, riempie
++   * tutta l'altezza disponibile del genitore. */
++  compact?: boolean
++}) {
++  // "case_id" deve combinare esattamente col nome dello stato reattivo in
++  // viz/trame_app.py (server.state.case_id): trame_client fa il merge
++  // automatico dei query param nello stato iniziale alla prima connessione,
++  // quindi il viewer si apre gia' sul caso giusto senza doverlo selezionare
++  // a mano dal menu del viewer.
++  const url = `http://${window.location.hostname}:8081/?case_id=${encodeURIComponent(caseId)}`
++
++  const iframe = (
++    <iframe src={url} className="w-full h-full border-0" title="Viewer 3D OpenFOAM" />
++  )
++
++  if (compact) {
++    return <div className="w-full h-full">{iframe}</div>
++  }
+ 
+   return (
+     <div className="card overflow-hidden">
+@@ -10,11 +32,7 @@ export default function ViewerFrame({ caseId }: { caseId: string }) {
+         </a>
+       </div>
+ 
+-      <iframe
+-        src={url}
+-        className="w-full h-[700px] border-0"
+-        title="Viewer 3D OpenFOAM"
+-      />
++      <div className="h-[700px]">{iframe}</div>
+     </div>
+   )
+ }

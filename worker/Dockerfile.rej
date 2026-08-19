@@ -1,0 +1,12 @@
+--- worker/Dockerfile
++++ worker/Dockerfile
+@@ -9,6 +9,9 @@ RUN apt-get update && apt-get install -y \
+     python3 \
+     python3-pip \
+     build-essential \
++    libgl1 \
++    libglu1-mesa \
++    libxrender1 \
+     && rm -rf /var/lib/apt/lists/*
+ 
+ RUN curl -s https://dl.openfoam.com/add-debian-repo.gpg | gpg --dearmor -o /usr/share/keyrings/OpenFOAM.gpg \

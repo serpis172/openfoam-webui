@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { Copy, Plus, Trash2 } from 'lucide-react'
 import { useState } from 'react'
-import { api } from '../api'
+import { api, CaseMeta } from '../api'
 
 export default function Dashboard() {
   const queryClient = useQueryClient()
@@ -54,7 +54,7 @@ export default function Dashboard() {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-        {cases.map((item: any) => (
+        {cases.map((item: CaseMeta) => (
           <div key={item.id} className="card p-6 hover:shadow-md transition-shadow">
             <div className="flex items-start justify-between mb-4">
               <div>

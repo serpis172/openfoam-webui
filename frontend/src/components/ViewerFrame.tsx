@@ -1,6 +1,7 @@
 export default function ViewerFrame({ caseId }: { caseId: string }) {
+  compact?: boolean;
   const url = `http://${window.location.hostname}:8081/?case=${caseId}`
-
+  
   return (
     <div className="card overflow-hidden">
       <div className="px-4 py-3 border-b flex items-center justify-between">
@@ -9,11 +10,12 @@ export default function ViewerFrame({ caseId }: { caseId: string }) {
           Apri in nuova finestra
         </a>
       </div>
-
+      
       <iframe
         src={url}
         className="w-full h-[700px] border-0"
         title="Viewer 3D OpenFOAM"
+        allow="fullscreen"
       />
     </div>
   )

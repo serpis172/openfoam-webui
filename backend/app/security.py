@@ -1,6 +1,23 @@
+import hmac
 import re
 from pathlib import Path
-from fastapi import HTTPException
+from fastapi import HTTPException, Security
+from fastapi.security import APIKeyHeader
+
+from app.config import settings
+
+_api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+
+
+def require_api_key(key: str | None = Security(_api_key_header)) -> None:
+    """ponytail: guardia minima. Senza questa, chiunque raggiunga l'app
+    puo' leggere/scrivere/cancellare file di caso e lanciare job (CPU/RAM
+    illimitati). Non e' un sistema utenti: e' un lucchetto sulla porta.
+    Upgrade a OAuth2/JWT multiutente quando servira' multi-tenant."""
+    if not settings.api_key:
+        return  # nessuna chiave configurata: deploy locale/dev, nessun controllo
+    if not key or not hmac.compare_digest(key, settings.api_key):
+        raise HTTPException(status_code=401, detail="API key mancante o non valida")
 
 
 def sanitize_filename(filename: str) -> str:
