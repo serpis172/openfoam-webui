@@ -1,0 +1,216 @@
+const BASE = '/api'
+// ponytail: chiave letta da env a build-time. Se non impostata, il backend
+// gira senza auth (vedi API_KEY in config.py) e l'header viene ignorato.
+const API_KEY = import.meta.env.VITE_API_KEY as string | undefined
+
+async function request<T = any>(path: string, options?: RequestInit): Promise<T> {
+  const response = await fetch(BASE + path, {
+    headers: {
+      'Content-Type': 'application/json',
+      ...(API_KEY ? { 'X-API-Key': API_KEY } : {}),
+    },
+    ...options,
+  })
+
+  if (!response.ok) {
+    let detail = 'Errore API'
+
+    try {
+      const data = await response.json()
+      detail = data.detail || JSON.stringify(data)
+    } catch {
+      detail = response.statusText
+    }
+
+    throw new Error(detail)
+  }
+
+  return response.json()
+}
+
+export interface CaseMeta {
+  id: string
+  name: string
+  solver: string
+  description?: string
+  created_at?: string
+  updated_at?: string
+  last_job_id?: string | null
+}
+
+export interface CaseListResponse {
+  items: CaseMeta[]
+  total: number
+  page: number
+  size: number
+}
+
+export interface FileItem {
+  path: string
+  size: number
+}
+
+export interface FilesResponse {
+  case_id: string
+  files: FileItem[]
+}
+
+export interface FileContentResponse {
+  path: string
+  content: string
+}
+
+export interface JobStatusResponse {
+  job_id: string
+  state: string
+  info: {
+    step?: string
+    message?: string
+    [key: string]: any
+  }
+}
+
+export interface ResidualsResponse {
+  case_id: string
+  residuals: Record<string, number[]>
+}
+
+export interface ValidationResponse {
+  case_id: string
+  valid: boolean
+  errors: string[]
+  warnings: string[]
+}
+
+export interface ReportResponse {
+  case_id: string
+  report: any | null
+}
+
+export interface CaseResponse {
+  meta: CaseMeta
+  config: any
+}
+
+export interface LogItem {
+  name: string
+  size: number
+}
+
+export interface LogsResponse {
+  case_id: string
+  logs: LogItem[]
+}
+
+export const api = {
+  health: () => request('/health'),
+
+  listCases: (q = '', page = 1, size = 20) =>
+    request<CaseListResponse>(`/cases/?q=${encodeURIComponent(q)}&page=${page}&size=${size}`),
+
+  getCase: (caseId: string) => request<CaseResponse>(`/cases/${caseId}`),
+
+  createCase: (payload: { name: string; solver: string; description?: string }) =>
+    request<{ case_id: string; name: string; solver: string; created_at: string }>('/cases/', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  deleteCase: (caseId: string) =>
+    request<{ status: string; case_id: string }>(`/cases/${caseId}`, {
+      method: 'DELETE',
+    }),
+
+  cloneCase: (caseId: string, newName: string) =>
+    request<{ case_id: string; name: string; cloned_from: string }>(
+      `/cases/${caseId}/clone?new_name=${encodeURIComponent(newName)}`,
+      {
+        method: 'POST',
+      }
+    ),
+
+  saveConfig: (caseId: string, config: any) =>
+    request<{ status: string; case_id: string }>(`/cases/${caseId}/config`, {
+      method: 'POST',
+      body: JSON.stringify(config),
+    }),
+
+  runCase: (caseId: string, processors?: number) =>
+    request<{ job_id: string; case_id: string }>('/jobs/run', {
+      method: 'POST',
+      body: JSON.stringify({ case_id: caseId, processors }),
+    }),
+
+  jobStatus: (jobId: string) => request<JobStatusResponse>(`/jobs/${jobId}`),
+
+  cancelJob: (jobId: string) =>
+    request<{ job_id: string; status: string }>(`/jobs/${jobId}/cancel`, {
+      method: 'POST',
+    }),
+
+  residuals: (caseId: string) => request<ResidualsResponse>(`/jobs/case/${caseId}/residuals`),
+
+  logs: (caseId: string) => request<LogsResponse>(`/jobs/case/${caseId}/logs`),
+
+  logContent: (caseId: string, logName: string) =>
+    request<{ log: string; tail: string[] }>(
+      `/jobs/case/${caseId}/log/${encodeURIComponent(logName)}?tail=300`
+    ),
+
+  report: (caseId: string) => request<ReportResponse>(`/jobs/case/${caseId}/report`),
+
+  validate: (caseId: string) =>
+    request<ValidationResponse>(`/validation/${caseId}/validate`, {
+      method: 'POST',
+    }),
+
+  listFiles: (caseId: string) => request<FilesResponse>(`/files/${caseId}/list`),
+
+  readFile: (caseId: string, path: string) =>
+    request<FileContentResponse>(`/files/${caseId}/text/${encodeURIComponent(path)}`),
+
+  saveFile: (caseId: string, path: string, content: string) =>
+    request<{ status: string; path: string }>(`/files/${caseId}/text/${encodeURIComponent(path)}`, {
+      method: 'PUT',
+      body: JSON.stringify({ content }),
+    }),
+
+  deleteFile: (caseId: string, path: string) =>
+    request<{ status: string; path: string }>(`/files/${caseId}/delete/${encodeURIComponent(path)}`, {
+      method: 'DELETE',
+    }),
+
+  uploadFile: async (caseId: string, path: string, file: File) => {
+    const formData = new FormData()
+    formData.append('file', file)
+
+    const response = await fetch(
+      `${BASE}/files/${caseId}/upload/${encodeURIComponent(path)}`,
+      {
+        method: 'POST',
+        headers: API_KEY ? { 'X-API-Key': API_KEY } : undefined,
+        body: formData,
+      }
+    )
+
+    if (!response.ok) {
+      throw new Error('Upload fallito')
+    }
+
+    return response.json()
+  },
+
+
+  meshReport: async (caseId: string) => {
+    const response = await fetch(`${API_URL}/cases/${caseId}/mesh/report`)
+    return response.json()
+  },
+  runMesh: async (caseId: string, processors?: number) => {
+    const response = await fetch(`${API_URL}/cases/${caseId}/mesh/run`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ processors: processors || 4 })
+    })
+    return response.json()
+  },
+}

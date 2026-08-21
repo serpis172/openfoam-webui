@@ -1,0 +1,17 @@
+--- frontend/src/api.ts
++++ frontend/src/api.ts
+@@ -64,6 +68,14 @@ export const api = {
+       body: JSON.stringify({ case_id: caseId, processors }),
+     }),
+ 
++  runMesh: (caseId: string, processors?: number) =>
++    request('/jobs/mesh', {
++      method: 'POST',
++      body: JSON.stringify({ case_id: caseId, processors }),
++    }),
++
++  meshReport: (caseId: string) => request(`/jobs/case/${caseId}/mesh-report`),
++
+   jobStatus: (jobId: string) => request(`/jobs/${jobId}`),
+ 
+   cancelJob: (jobId: string) =>
