@@ -4,7 +4,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { UploadCloud, File, X, Loader } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card'
-import { upload } from '@/api/client'
+import { filesApi } from '@/api/files'
 import { formatBytes } from '@/lib/utils'
 import { useToast } from '@/hooks/useToast'
 import { useWizardStore } from '@/stores/wizardStore'
@@ -45,13 +45,8 @@ export function GeometryUpload({ projectId }: GeometryUploadProps) {
 
   const uploadMutation = useMutation({
     mutationFn: async (file: File) => {
-      const formData = new FormData()
-      formData.append('file', file)
-      
-      return upload<{ status: string; path: string }>(
-        `/files/${projectId}/upload/constant/triSurface/${file.name}`,
-        formData
-      )
+      if (!projectId) throw new Error('Nessun progetto selezionato: apri o crea un progetto prima di caricare la geometria')
+      return filesApi.uploadGeometry(projectId, file)
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['project', projectId] })

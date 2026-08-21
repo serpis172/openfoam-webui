@@ -62,18 +62,19 @@ export function Topbar() {
         {theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
       </Button>
 
-      {/* Help */}
-      <Button variant="ghost" size="icon">
+      {/* Help, Settings, User: nessuna pagina reale esiste ancora dietro
+       * questi bottoni. Meglio disabilitati con un motivo che finti e
+       * silenziosamente rotti (stesso principio applicato altrove:
+       * ResultsExport, Dashboard). */}
+      <Button variant="ghost" size="icon" disabled title="Documentazione non ancora disponibile">
         <HelpCircle className="w-4 h-4" />
       </Button>
 
-      {/* Settings */}
-      <Button variant="ghost" size="icon">
+      <Button variant="ghost" size="icon" disabled title="Impostazioni non ancora implementate">
         <Settings className="w-4 h-4" />
       </Button>
 
-      {/* User */}
-      <Button variant="ghost" size="icon">
+      <Button variant="ghost" size="icon" disabled title="Profilo utente non ancora implementato">
         <User className="w-4 h-4" />
       </Button>
     </header>

@@ -39,4 +39,3 @@ docker compose up -d
 echo ""
 echo "Fatto!"
 echo "Apri: http://localhost:8000"
-echo "Viewer 3D opzionale: docker compose --profile viz up -d viz"

@@ -1,20 +1,20 @@
 import React, { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Command } from 'cmdk'
-import { 
-  Home, 
-  FolderOpen, 
-  Plus, 
-  Settings, 
+import {
+  Home,
+  FolderOpen,
+  Plus,
   Search,
-  FileText,
   Play,
 } from 'lucide-react'
 import { useUIStore } from '@/stores/uiStore'
+import { useProjectStore } from '@/stores/projectStore'
 import { Dialog, DialogContent } from '@/components/ui/Dialog'
 
 export function CommandPalette() {
   const { commandPaletteOpen, setCommandPalette } = useUIStore()
+  const { currentProject } = useProjectStore()
   const navigate = useNavigate()
   const [search, setSearch] = useState('')
 
@@ -37,14 +37,24 @@ export function CommandPalette() {
       items: [
         { icon: Home, label: 'Dashboard', action: () => navigate('/') },
         { icon: FolderOpen, label: 'Progetti', action: () => navigate('/projects') },
-        { icon: Settings, label: 'Settings', action: () => navigate('/settings') },
       ],
     },
     {
       group: 'Azioni',
       items: [
-        { icon: Plus, label: 'Nuovo Progetto', action: () => navigate('/projects/new') },
-        { icon: Play, label: 'Avvia Simulazione', action: () => console.log('Run') },
+        // ponytail: prima portava a /projects/new, una rotta che non
+        // esiste (rimbalzava subito indietro via il redirect su 404
+        // di ProjectLayout). Il modale di creazione vero vive in
+        // Dashboard.tsx come stato locale - non ancora sollevato a
+        // uno store condiviso, quindi qui si può solo portare l'utente
+        // dove il bottone "Nuovo Progetto" reale esiste.
+        { icon: Plus, label: 'Nuovo Progetto', action: () => navigate('/projects') },
+        // "Avvia Simulazione" prima faceva solo console.log('Run') - non
+        // succedeva nulla di visibile. Ora porta davvero alla pagina
+        // Runs del progetto aperto, se ce n'è uno.
+        ...(currentProject
+          ? [{ icon: Play, label: `Avvia Simulazione (${currentProject.name})`, action: () => navigate(`/projects/${currentProject.id}/runs`) }]
+          : []),
       ],
     },
   ]

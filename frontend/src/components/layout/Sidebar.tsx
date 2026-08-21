@@ -1,5 +1,5 @@
 import React from 'react'
-import { Link, useLocation, useParams } from 'react-router-dom'
+import { Link, useLocation } from 'react-router-dom'
 import {
   Home,
   FolderOpen,
@@ -42,10 +42,17 @@ const workspaceNavigation = [
 
 export function Sidebar({ collapsed }: SidebarProps) {
   const location = useLocation()
-  const { projectId } = useParams<{ projectId: string }>()
   const { toggleSidebar } = useUIStore()
 
-  const isProjectPage = location.pathname.includes('/projects/') && !!projectId
+  // ponytail: niente useParams() qui. Sidebar viene renderizzata da
+  // AppShell come SORELLA di <Routes>, non discendente di una <Route>
+  // matchata - useParams() in questa posizione dell'albero non vede
+  // mai :projectId, resterebbe sempre undefined a runtime anche se
+  // TypeScript non lo segnala. useLocation() invece funziona ovunque
+  // sotto <BrowserRouter>, quindi si estrae l'id dal path a mano.
+  const projectMatch = location.pathname.match(/^\/projects\/([^/]+)/)
+  const projectId = projectMatch?.[1]
+  const isProjectPage = !!projectId && projectId !== 'new'
 
   return (
     <aside

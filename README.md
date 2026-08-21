@@ -46,11 +46,10 @@ http://localhost:8000
 
 ## Viewer 3D
 
-```bash
-docker compose --profile viz up -d viz
-```
-
-Poi apri un caso e vai nel tab **Viewer 3D**.
+Il servizio `viz` parte in automatico con `docker compose up`, non serve
+nessun profilo opzionale. Il viewer è integrato nella pagina Risultati
+di ogni progetto, e raggiungibile anche direttamente su
+`http://localhost:8081`.
 
 ## Comandi utili
 

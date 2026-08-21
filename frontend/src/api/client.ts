@@ -50,10 +50,15 @@ export async function del<T>(url: string): Promise<T> {
 }
 
 export async function upload<T>(url: string, formData: FormData): Promise<T> {
+  // ponytail: NON impostare Content-Type qui. Un FormData ha bisogno del
+  // boundary che il browser genera da solo in fase di invio - un header
+  // manuale "multipart/form-data" senza boundary fa si' che axios/XHR
+  // mandi quell'header letterale mentre il body e' comunque codificato
+  // con un boundary reale, che il parser multipart del backend non trova
+  // da nessuna parte nell'header dichiarato. Lasciando undefined, axios
+  // rileva il FormData e imposta Content-Type con il boundary corretto.
   const response = await apiClient.post<T>(url, formData, {
-    headers: {
-      'Content-Type': 'multipart/form-data',
-    },
+    headers: { 'Content-Type': undefined },
   })
   return response.data
 }

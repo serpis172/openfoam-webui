@@ -78,12 +78,12 @@ def create_case(payload: CaseCreate):
 
     generate_case_files(case_dir, config, meta)
 
-    return {
-        "case_id": case_id,
-        "name": payload.name,
-        "solver": payload.solver,
-        "created_at": now,
-    }
+    # ponytail: prima ritornava una shape diversa da GET /cases/{id}
+    # (case_id invece di id, senza updated_at/description/last_job_id).
+    # Il frontend leggeva data.id dopo la creazione e trovava sempre
+    # undefined -> navigava su /projects/undefined. Stessa risorsa,
+    # stessa shape di meta, sempre.
+    return meta
 
 
 @router.get("/")
@@ -175,11 +175,7 @@ def clone_case(case_id: str, new_name: str = Query(..., min_length=1, max_length
 
     write_meta(target, meta)
 
-    return {
-        "case_id": new_id,
-        "name": new_name,
-        "cloned_from": case_id,
-    }
+    return meta
 
 
 @router.post("/{case_id}/config")

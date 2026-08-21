@@ -1,6 +1,7 @@
 import React from 'react'
-import { Routes, Route, Navigate, useParams } from 'react-router-dom'
+import { Routes, Route, Navigate } from 'react-router-dom'
 import { AppShell } from '@/components/layout/AppShell'
+import { ProjectLayout } from '@/components/layout/ProjectLayout'
 import { ToastProvider } from '@/hooks/useToast'
 import { Dashboard } from '@/features/projects/Dashboard'
 import { GeometryPage } from '@/features/geometry/GeometryPage'
@@ -10,11 +11,6 @@ import { BoundaryConditionsPage } from '@/features/boundaryConditions/BoundaryCo
 import { RunsPage } from '@/features/simulation/RunsPage'
 import { ResultsPage } from '@/features/results/ResultsPage'
 
-function RedirectToGeometry() {
-  const { projectId } = useParams<{ projectId: string }>()
-  return <Navigate to={`/projects/${projectId}/geometry`} replace />
-}
-
 export default function App() {
   return (
     <ToastProvider>
@@ -22,18 +18,24 @@ export default function App() {
         <Routes>
           <Route path="/" element={<Dashboard />} />
           <Route path="/projects" element={<Dashboard />} />
-          {/* ProjectWorkspace (viewport unico + pannelli laterali) esiste
-              ancora nel codebase ma non e' collegato a dati reali
-              (Viewport3D mostra un cubo fisso, PropertiesPanel/BottomPanel
-              non verificati) - redirect diretto alle pagine per-step, che
-              sono quelle effettivamente cablate al backend. */}
-          <Route path="/projects/:projectId" element={<RedirectToGeometry />} />
-          <Route path="/projects/:projectId/geometry" element={<GeometryPage />} />
-          <Route path="/projects/:projectId/mesh" element={<MeshPage />} />
-          <Route path="/projects/:projectId/physics" element={<PhysicsPage />} />
-          <Route path="/projects/:projectId/boundary-conditions" element={<BoundaryConditionsPage />} />
-          <Route path="/projects/:projectId/runs" element={<RunsPage />} />
-          <Route path="/projects/:projectId/results" element={<ResultsPage />} />
+
+          {/* ProjectLayout fa il fetch del progetto UNA volta e popola
+              projectStore.currentProject per tutte le rotte figlie -
+              prima ogni pagina leggeva un currentProject sempre null.
+              ProjectWorkspace (viewport unico + pannelli laterali)
+              esiste ancora nel codebase ma non e' collegato a dati
+              reali (Viewport3D mostra un cubo fisso) - le rotte
+              figlie qui sono quelle effettivamente cablate al backend. */}
+          <Route path="/projects/:projectId" element={<ProjectLayout />}>
+            <Route index element={<Navigate to="geometry" replace />} />
+            <Route path="geometry" element={<GeometryPage />} />
+            <Route path="mesh" element={<MeshPage />} />
+            <Route path="physics" element={<PhysicsPage />} />
+            <Route path="boundary-conditions" element={<BoundaryConditionsPage />} />
+            <Route path="runs" element={<RunsPage />} />
+            <Route path="results" element={<ResultsPage />} />
+          </Route>
+
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </AppShell>
