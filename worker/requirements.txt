@@ -1,0 +1,4 @@
+celery[redis]==5.3.6
+redis==5.0.1
+# per l'export del preview mesh WebGL (worker/mesh_export.py)
+pyvista==0.43.2

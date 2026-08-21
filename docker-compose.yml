@@ -1,0 +1,75 @@
+name: openfoam-webui
+
+services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD}"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build: ./backend
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - DATA_ROOT=/data
+      - STATIC_DIR=/app/static
+      - TEMPLATES_DIR=/app/templates
+    volumes:
+      - cases:/data
+      - ./frontend/dist:/app/static:ro
+      - ./backend/templates:/app/templates
+    depends_on:
+      redis:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"
+        ]
+      interval: 20s
+      timeout: 5s
+      retries: 10
+
+  worker:
+    build: ./worker
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - CASE_ROOT=/data/cases
+    volumes:
+      - cases:/data
+    depends_on:
+      redis:
+        condition: service_healthy
+    mem_limit: 16g
+    cpus: 8
+
+  viz:
+    build: ./viz
+    restart: unless-stopped
+    # niente "profiles: [viz]": il viewer 3D deve essere sempre attivo,
+    # non un extra opzionale da abilitare a mano.
+    env_file:
+      - .env
+    volumes:
+      - cases:/data:ro
+    ports:
+      - "8081:8080"
+
+volumes:
+  cases:
+  redis_data:
