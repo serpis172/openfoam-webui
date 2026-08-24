@@ -308,6 +308,41 @@ def generate_snappy_hex_mesh_dict(case_dir: Path, config: CaseConfig):
     location = foam_vector(config.mesh.location_in_mesh)
     level = config.mesh.surface_refinement
 
+    # ponytail: se non sono state definite fasce di raffinamento graduato,
+    # comportamento identico a prima (un livello costante vicino alla
+    # geometria) - non rompo case esistenti che non usano questo campo.
+    if config.mesh.refinement_distances:
+        levels_str = " ".join(
+            f"({d.distance} {d.level})" for d in config.mesh.refinement_distances
+        )
+        geometry_refinement_region = f"""    geometry
+    {{
+        mode distance;
+        levels ({levels_str});
+    }}
+"""
+    else:
+        geometry_refinement_region = ""
+
+    box_geometry_entries = ""
+    box_refinement_regions = ""
+    for box in config.mesh.refinement_boxes:
+        box_min = foam_vector(box.min)
+        box_max = foam_vector(box.max)
+        box_geometry_entries += f"""    {box.name}
+    {{
+        type searchableBox;
+        min {box_min};
+        max {box_max};
+    }}
+"""
+        box_refinement_regions += f"""    {box.name}
+    {{
+        mode inside;
+        levels ((1e15 {box.level}));
+    }}
+"""
+
     content = f"""castellatedMesh true;
 snap            true;
 addLayers       {'true' if config.mesh.layers > 0 else 'false'};
@@ -319,7 +354,7 @@ geometry
         type triSurfaceMesh;
         name geometry;
     }}
-}};
+{box_geometry_entries}}};
 
 castellatedMeshControls
 {{
@@ -345,7 +380,7 @@ castellatedMeshControls
 
     refinementRegions
     {{
-    }}
+{geometry_refinement_region}{box_refinement_regions}    }}
 
     locationInMesh {location};
 

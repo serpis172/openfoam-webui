@@ -84,6 +84,16 @@ export function mapMeshSettings(mesh: MeshSettings, stlFileName?: string) {
     first_layer_thickness: mesh.firstLayerThickness,
     growth_ratio: mesh.growthRatio,
     processors: mesh.processors,
+    refinement_distances: mesh.refinementDistances.map(d => ({
+      distance: d.distance,
+      level: d.level,
+    })),
+    refinement_boxes: mesh.refinementBoxes.map(b => ({
+      name: b.name,
+      min: [...b.min],
+      max: [...b.max],
+      level: b.level,
+    })),
   }
 }
 

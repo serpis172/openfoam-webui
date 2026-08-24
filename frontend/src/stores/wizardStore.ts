@@ -42,6 +42,8 @@ const defaultMeshSettings: MeshSettings = {
   domainMin: [-1, -1, -1],
   domainMax: [5, 1, 1],
   cells: [60, 20, 20],
+  refinementDistances: [],
+  refinementBoxes: [],
 }
 
 const defaultPhysicsConfig: PhysicsConfig = {

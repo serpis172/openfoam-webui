@@ -1,5 +1,17 @@
 export type MeshType = 'blockMesh' | 'snappyHexMesh' | 'cfMesh'
 
+export interface RefinementDistance {
+  distance: number
+  level: number
+}
+
+export interface RefinementBox {
+  name: string
+  min: [number, number, number]
+  max: [number, number, number]
+  level: number
+}
+
 export interface MeshSettings {
   meshType: MeshType
   globalSize: number
@@ -12,6 +24,10 @@ export interface MeshSettings {
   domainMin: [number, number, number]
   domainMax: [number, number, number]
   cells: [number, number, number]
+  // fasce di raffinamento a distanza crescente dalla geometria (fine
+  // vicino, via via più grossolano) + regioni indipendenti (es. scia)
+  refinementDistances: RefinementDistance[]
+  refinementBoxes: RefinementBox[]
 }
 
 export interface MeshQuality {

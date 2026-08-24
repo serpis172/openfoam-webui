@@ -79,6 +79,32 @@ class BoundaryCondition(BaseModel):
     omega_value: float = 1.0
 
 
+class RefinementDistance(BaseModel):
+    """Una fascia di raffinamento a distanza crescente dalla geometria:
+    mappa 1:1 su refinementRegions/mode distance di snappyHexMesh. Livelli
+    più alti = celle più piccole. Ordinate per distanza crescente, oltre
+    l'ultima si torna al livello base della mesh."""
+    distance: float = Field(gt=0)
+    level: int = Field(ge=0, le=10)
+
+
+class RefinementBox(BaseModel):
+    """Regione di raffinamento indipendente dalla geometria (es. la
+    scia dietro un'auto): un box searchableBox + refinementRegions in
+    modalità 'inside', livello uniforme su tutto il volume del box."""
+    name: str = Field(min_length=1, max_length=40, pattern=r"^[a-zA-Z0-9_]+$")
+    min: List[float]
+    max: List[float]
+    level: int = Field(ge=0, le=10)
+
+    @field_validator("min", "max")
+    @classmethod
+    def check_three_components(cls, v: List[float]) -> List[float]:
+        if len(v) != 3:
+            raise ValueError("min/max del box devono avere esattamente 3 componenti (x, y, z)")
+        return v
+
+
 class MeshSettings(BaseModel):
     mesh_type: str = "blockMesh"
     domain_min: List[float] = [-1.0, -1.0, -1.0]
@@ -92,6 +118,33 @@ class MeshSettings(BaseModel):
     first_layer_thickness: float = 0.001
     growth_ratio: float = 1.2
     processors: int = Field(default=4, ge=1, le=64)
+    # Vuoti di default = comportamento invariato (livello unico costante
+    # vicino alla geometria, come prima). Se valorizzati, sostituiscono
+    # surface_refinement con un raffinamento graduato per distanza.
+    refinement_distances: List[RefinementDistance] = []
+    refinement_boxes: List[RefinementBox] = []
+
+    @field_validator("refinement_distances")
+    @classmethod
+    def sort_and_dedupe_distances(cls, v: List["RefinementDistance"]) -> List["RefinementDistance"]:
+        # snappyHexMesh richiede le distanze in ordine crescente: invece
+        # di rifiutare un input disordinato (l'utente lo trascina su un
+        # pannello grafico, l'ordine con cui li aggiunge e' arbitrario)
+        # lo normalizziamo qui, un punto solo.
+        distances_seen = set()
+        for item in v:
+            if item.distance in distances_seen:
+                raise ValueError(f"Distanza duplicata nel raffinamento: {item.distance}")
+            distances_seen.add(item.distance)
+        return sorted(v, key=lambda item: item.distance)
+
+    @field_validator("refinement_boxes")
+    @classmethod
+    def unique_box_names(cls, v: List["RefinementBox"]) -> List["RefinementBox"]:
+        names = [box.name for box in v]
+        if len(names) != len(set(names)):
+            raise ValueError("I nomi delle regioni di raffinamento devono essere unici")
+        return v
 
 
 class FunctionObject(BaseModel):
