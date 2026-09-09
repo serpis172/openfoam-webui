@@ -37,6 +37,18 @@ export function mapPhysicsConfig(physics: PhysicsConfig) {
     throw new ConfigMappingError(`Solver "${physics.solver}" non supportato dal backend.`)
   }
 
+  const BUOYANT_SOLVERS_LOCAL = new Set(['buoyantSimpleFoam', 'buoyantPimpleFoam'])
+  if (BUOYANT_SOLVERS_LOCAL.has(physics.solver) && physics.materialId !== 'air') {
+    // ponytail: stesso vincolo del backend (models.py), replicato qui
+    // per un feedback immediato invece di scoprirlo solo al salvataggio.
+    // I solver buoyant qui usano equationOfState perfectGas (valido per
+    // un gas): un liquido richiederebbe un modello Boussinesq con un
+    // coefficiente di dilatazione termica che questa UI non raccoglie.
+    throw new ConfigMappingError(
+      `Il solver ${physics.solver} (scambio termico) supporta solo Aria come fluido: ${physics.materialId} richiederebbe un modello non ancora implementato.`
+    )
+  }
+
   const turbulence = physics.turbulenceModel === 'laminar'
     ? 'kOmegaSST' // valore placeholder, ignorato quando laminar=true
     : TURBULENCE_MODEL_MAP[physics.turbulenceModel]
@@ -58,6 +70,8 @@ export function mapPhysicsConfig(physics: PhysicsConfig) {
     laminar: physics.turbulenceModel === 'laminar',
     velocity: physics.referenceValues ? [physics.referenceValues.velocity, 0, 0] : [10, 0, 0],
     pressure: 0,
+    temperature: physics.temperature ?? 300,
+    gravity: physics.gravity ?? [0, 0, -9.81],
     end_time: 1000,
     write_interval: 100,
     delta_t: 1,
@@ -140,6 +154,13 @@ export function mapBoundaryConditions(boundaries: BoundaryCondition[]) {
       patchType = 'wedge'
     }
 
+    // Temperatura: presente solo se l'utente l'ha impostata in
+    // BCEditDialog (parete calda/fredda, o temperatura di un flusso in
+    // ingresso). Default onesto: zeroGradient (adiabatica, nessuno
+    // scambio termico), non un valore inventato.
+    const temperatureType = (bc.parameters?.temperatureType as string) ?? 'zeroGradient'
+    const temperatureValue = (bc.parameters?.temperature as number) ?? 300
+
     return {
       name: bc.patchName || bc.name,
       patch_type: patchType,
@@ -147,6 +168,8 @@ export function mapBoundaryConditions(boundaries: BoundaryCondition[]) {
       U_value: velocity,
       p_type: mapped.p_type,
       p_value: (bc.parameters?.pressure as number) ?? 0,
+      T_type: temperatureType,
+      T_value: temperatureValue,
       k_type: 'fixedValue',
       k_value: 0.1,
       omega_type: 'fixedValue',
@@ -155,17 +178,31 @@ export function mapBoundaryConditions(boundaries: BoundaryCondition[]) {
   })
 }
 
+const BUOYANT_SOLVERS = new Set(['buoyantSimpleFoam', 'buoyantPimpleFoam'])
+
 export function buildCaseConfig(input: {
   physics: PhysicsConfig
   mesh: MeshSettings
   boundaries: BoundaryCondition[]
   stlFileName?: string
 }) {
+  const wallPatchNames = input.boundaries
+    .filter(bc => bc.type === 'wall' || bc.type === 'movingWall' || bc.type === 'noSlipWall' || bc.type === 'slipWall')
+    .map(bc => bc.patchName || bc.name)
+
+  // ponytail: report del calore scambiato alle pareti attivato in
+  // automatico per i solver termici, non serve un pannello dedicato
+  // per una cosa che ha senso sempre in questo caso - se non ci sono
+  // pareti non viene aggiunto nulla di inutile.
+  const functionObjects = (BUOYANT_SOLVERS.has(input.physics.solver) && wallPatchNames.length > 0)
+    ? [{ type: 'wallHeatFlux', name: 'wallHeatFlux', patches: wallPatchNames, fields: [], rho: 1.225, origin: [0, 0, 0], probe_locations: [] }]
+    : []
+
   return {
     physics: mapPhysicsConfig(input.physics),
     mesh: mapMeshSettings(input.mesh, input.stlFileName),
     boundaries: mapBoundaryConditions(input.boundaries),
-    function_objects: [],
+    function_objects: functionObjects,
     run: { clean_start: true, vtk_all_times: false, run_check_mesh: true },
   }
 }

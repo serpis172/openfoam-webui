@@ -94,7 +94,7 @@ export function RunsPage() {
         </div>
       </div>
 
-      <RunsTable runs={runs || []} />
+      <RunsTable runs={runs || []} onCancelled={() => queryClient.invalidateQueries({ queryKey: ['runs', currentProject?.id] })} />
 
       <RunMonitoring projectId={currentProject?.id || ''} />
     </div>

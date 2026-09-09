@@ -21,11 +21,9 @@ services:
     environment:
       - DATA_ROOT=/data
       - STATIC_DIR=/app/static
-      - TEMPLATES_DIR=/app/templates
     volumes:
       - cases:/data
       - ./frontend/dist:/app/static:ro
-      - ./backend/templates:/app/templates
     depends_on:
       redis:
         condition: service_healthy

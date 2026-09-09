@@ -49,6 +49,8 @@ export function BCEditDialog({ open, onOpenChange, initial, onSave }: BCEditDial
   const typeInfo = BC_TYPE_OPTIONS.find(t => t.id === bc.type)
   const velocity = (bc.parameters.velocity as number[] | undefined) ?? [0, 0, 0]
   const pressure = (bc.parameters.pressure as number | undefined) ?? 0
+  const temperatureType = (bc.parameters.temperatureType as string | undefined) ?? 'zeroGradient'
+  const temperature = (bc.parameters.temperature as number | undefined) ?? 300
 
   const canSave = bc.name.trim().length > 0 && bc.patchName.trim().length > 0
 
@@ -132,6 +134,38 @@ export function BCEditDialog({ open, onOpenChange, initial, onSave }: BCEditDial
           </div>
         )}
 
+        {/* Temperatura: rilevante per qualunque tipo di patch quando il
+         * caso ha scambio termico attivo. zeroGradient (default) = nessuno
+         * scambio (parete adiabatica / temperatura non imposta). */}
+        <div className="border-t pt-3">
+          <label className="block text-xs font-medium mb-1">Temperatura (solo se il caso ha scambio termico attivo)</label>
+          <div className="flex gap-2">
+            <select
+              className="px-3 py-2 rounded-lg border bg-background text-sm"
+              value={temperatureType}
+              onChange={e => setBc({ ...bc, parameters: { ...bc.parameters, temperatureType: e.target.value } })}
+            >
+              <option value="zeroGradient">Adiabatica (nessuno scambio)</option>
+              <option value="fixedValue">Temperatura imposta</option>
+              <option value="inletOutlet">Temperatura di ingresso flusso</option>
+            </select>
+            {temperatureType !== 'zeroGradient' && (
+              <input
+                type="number"
+                className="flex-1 px-3 py-2 rounded-lg border bg-background text-sm"
+                value={temperature}
+                onChange={e => setBc({ ...bc, parameters: { ...bc.parameters, temperature: Number(e.target.value) } })}
+                placeholder="Kelvin"
+              />
+            )}
+          </div>
+          {temperatureType !== 'zeroGradient' && (
+            <p className="text-[10px] text-muted-foreground mt-1">
+              {temperature} K ≈ {round(temperature - 273.15)} °C
+            </p>
+          )}
+        </div>
+
         <div className="flex justify-end gap-2 pt-2">
           <Button variant="outline" onClick={() => onOpenChange(false)}>Annulla</Button>
           <Button onClick={handleSave} disabled={!canSave}>Salva</Button>
@@ -139,6 +173,11 @@ export function BCEditDialog({ open, onOpenChange, initial, onSave }: BCEditDial
       </DialogContent>
     </Dialog>
   )
+}
+
+function round(n: number, decimals = 1): number {
+  const f = Math.pow(10, decimals)
+  return Math.round(n * f) / f
 }
 
 export { emptyBC }

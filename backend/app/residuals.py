@@ -1,3 +1,4 @@
+import json
 import re
 from pathlib import Path
 
@@ -29,10 +30,42 @@ def parse_openfoam_log(log_path: Path):
 
 
 def parse_latest_residuals(case_dir: Path):
-    logs = sorted(case_dir.glob("log.*"))
+    """ponytail: prima prendeva il log.* con mtime più recente - durante
+    il solve e' quello giusto (il log del solver si aggiorna
+    continuamente), ma appena la run finisce foamToVTK gira per ultimo
+    e diventa il file più recente, che non contiene NESSUN residuo. Il
+    grafico si svuotava esattamente quando l'utente voleva vedere la
+    convergenza finale.
 
-    if not logs:
-        return {}
+    Ordine corretto:
+    1. postProcessing/residuals.json se esiste: e' il risultato già
+       completo e corretto scritto dal worker a fine run (merge di
+       tutti i log, stesso codice usato per generare il report finale).
+    2. altrimenti (run ancora in corso) il log del SOLVER specifico,
+       letto da config.json - non "il più recente".
+    3. fallback finale: merge di tutti i log.*, come fa il worker.
+    """
+    residuals_file = case_dir / "postProcessing" / "residuals.json"
+    if residuals_file.exists():
+        try:
+            return json.loads(residuals_file.read_text())
+        except Exception:
+            pass
 
-    latest = max(logs, key=lambda p: p.stat().st_mtime)
-    return parse_openfoam_log(latest)
+    config_file = case_dir / "config.json"
+    if config_file.exists():
+        try:
+            config = json.loads(config_file.read_text())
+            solver = config.get("physics", {}).get("solver")
+            if solver:
+                solver_log = case_dir / f"log.{solver}"
+                if solver_log.exists():
+                    return parse_openfoam_log(solver_log)
+        except Exception:
+            pass
+
+    merged = {}
+    for log in sorted(case_dir.glob("log.*")):
+        for field, values in parse_openfoam_log(log).items():
+            merged.setdefault(field, []).extend(values)
+    return merged

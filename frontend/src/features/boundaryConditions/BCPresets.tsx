@@ -38,14 +38,49 @@ const presets: {
     ],
   },
   {
-    id: 'natural_convection',
-    name: 'Natural Convection',
-    description: 'Hot/cold walls, open boundaries',
+    id: 'radiator_heat_exchanger',
+    name: 'Radiatore / Scambiatore di calore',
+    description: 'Aria in ingresso, alette calde, uscita — richiede solver con scambio termico (Fisica → Scambio termico)',
     icon: Thermometer,
     conditions: () => [
-      makeBc({ name: 'Parete calda', patchName: 'hotWall', type: 'wall' }),
-      makeBc({ name: 'Parete fredda', patchName: 'coldWall', type: 'wall' }),
-      makeBc({ name: 'Aperture', patchName: 'openings', type: 'pressureOutlet', parameters: { pressure: 0 } }),
+      makeBc({
+        name: 'Ingresso aria',
+        patchName: 'inlet',
+        type: 'velocityInlet',
+        parameters: { velocity: [5, 0, 0], temperatureType: 'fixedValue', temperature: 293 },
+      }),
+      makeBc({
+        name: 'Uscita aria',
+        patchName: 'outlet',
+        type: 'pressureOutlet',
+        parameters: { pressure: 0, temperatureType: 'inletOutlet', temperature: 293 },
+      }),
+      makeBc({
+        name: 'Alette calde',
+        patchName: 'hotFins',
+        type: 'wall',
+        parameters: { temperatureType: 'fixedValue', temperature: 350 },
+      }),
+      makeBc({
+        name: 'Condotto (isolato)',
+        patchName: 'ductWalls',
+        type: 'wall',
+        parameters: { temperatureType: 'zeroGradient' },
+      }),
+    ],
+  },
+  {
+    id: 'natural_convection',
+    name: 'Natural Convection',
+    description: 'Hot/cold walls, open boundaries — richiede solver con scambio termico',
+    icon: Thermometer,
+    conditions: () => [
+      // ponytail: prima "calda"/"fredda" erano solo nomi, senza
+      // temperatureType/temperature impostati - zero scambio termico
+      // reale nonostante l'etichetta.
+      makeBc({ name: 'Parete calda', patchName: 'hotWall', type: 'wall', parameters: { temperatureType: 'fixedValue', temperature: 350 } }),
+      makeBc({ name: 'Parete fredda', patchName: 'coldWall', type: 'wall', parameters: { temperatureType: 'fixedValue', temperature: 290 } }),
+      makeBc({ name: 'Aperture', patchName: 'openings', type: 'pressureOutlet', parameters: { pressure: 0, temperatureType: 'inletOutlet', temperature: 293 } }),
     ],
   },
 ]

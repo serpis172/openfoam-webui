@@ -11,6 +11,8 @@ export interface PhysicsConfig {
   solver: string
   materialId: string
   gravity?: [number, number, number]
+  /** Kelvin. Rilevante solo quando thermal === 'heatTransfer'. */
+  temperature?: number
   referenceValues?: {
     velocity: number
     length: number

@@ -38,8 +38,14 @@ RUN pip3 install --no-cache-dir -r requirements.txt
 
 COPY tasks.py mesh_export.py .
 
-# Crea utente non-root
-RUN useradd -m foam || true
-USER foam
-
+# ponytail: prima girava come utente "foam" non-root, ma il container
+# api (backend/Dockerfile) gira come root di default e crea le cartelle
+# dei casi nello stesso volume Docker condiviso (cases:/data). Un
+# volume creato/scritto per primo da root non e' scrivibile da un altro
+# utente senza permessi espliciti - ogni job di mesh/run avrebbe
+# fallito al primo file scritto con Permission Denied. Nessun test
+# Python a singolo processo lo becca: serve un vero deploy
+# multi-container per vederlo. Stessa fiducia (root) di entrambi i
+# lati del volume condiviso, non una via di mezzo con UID che devono
+# combaciare per sempre.
 CMD ["celery", "-A", "tasks", "worker", "--loglevel=info", "--concurrency=1"]

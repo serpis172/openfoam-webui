@@ -1,5 +1,5 @@
 from typing import List, Optional
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 # ponytail: whitelist chiuso. Ogni stringa qui finisce cruda in un dict
 # OpenFOAM (system/controlDict, turbulenceProperties) o come argv[0] di
@@ -50,6 +50,11 @@ class PhysicsConfig(BaseModel):
     end_time: float = 1000.0
     write_interval: float = 100.0
     delta_t: float = 1.0
+    # Solo per solver buoyant (scambio termico): temperatura di
+    # riferimento in Kelvin e vettore gravità. Ignorati per solver
+    # incompressibili puri (nessun effetto sul dict generato).
+    temperature: float = Field(default=300.0, gt=0, description="Kelvin")
+    gravity: List[float] = [0.0, 0.0, -9.81]
 
     @field_validator("solver")
     @classmethod
@@ -65,6 +70,23 @@ class PhysicsConfig(BaseModel):
             raise ValueError(f"Modello di turbolenza non consentito: {v}")
         return v
 
+    @model_validator(mode="after")
+    def check_buoyant_fluid_compatibility(self):
+        # ponytail: i solver buoyant qui generano thermophysicalProperties
+        # con equationOfState perfectGas, valido per un gas (aria), non
+        # per un liquido (acqua/olio - servirebbe Boussinesq o un EOS
+        # diverso, con un coefficiente di dilatazione termica che questa
+        # UI non raccoglie ancora). Meglio bloccare con un errore chiaro
+        # che generare un dict fisicamente sbagliato che il solver
+        # accetta ma calcola densità assurde.
+        buoyant_solvers = {"buoyantSimpleFoam", "buoyantPimpleFoam"}
+        if self.solver in buoyant_solvers and self.fluid != "air":
+            raise ValueError(
+                f"Il solver {self.solver} (scambio termico) supporta solo aria come fluido "
+                f"in questa versione: {self.fluid} richiederebbe un modello Boussinesq non ancora implementato."
+            )
+        return self
+
 
 class BoundaryCondition(BaseModel):
     name: str = "inlet"
@@ -77,6 +99,11 @@ class BoundaryCondition(BaseModel):
     k_value: float = 0.1
     omega_type: str = "fixedValue"
     omega_value: float = 1.0
+    # Solo per solver con scambio termico. zeroGradient = parete
+    # adiabatica (default, nessun scambio); fixedValue = temperatura
+    # imposta (parete calda/fredda, es. le alette di un radiatore).
+    T_type: str = "zeroGradient"
+    T_value: float = Field(default=300.0, gt=0, description="Kelvin")
 
 
 class RefinementDistance(BaseModel):

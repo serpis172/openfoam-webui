@@ -1,3 +1,4 @@
+import json
 import re
 from pathlib import Path
 
@@ -92,15 +93,40 @@ def validate_case(case_id: str):
     errors = []
     warnings = []
 
+    # ponytail: "constant/transportProperties" era negli obbligatori per
+    # QUALUNQUE caso, sempre. Ma i solver compressibili/buoyant (scambio
+    # termico) generano thermophysicalProperties AL POSTO di
+    # transportProperties - un caso radiatore corretto veniva segnalato
+    # come rotto da un file che non deve nemmeno esistere per quel
+    # solver. Leggo il solver da config.json per sapere cosa serve
+    # davvero.
+    config_file = case_dir / "config.json"
+    solver = None
+    if config_file.exists():
+        try:
+            solver = json.loads(config_file.read_text()).get("physics", {}).get("solver")
+        except Exception:
+            pass
+
+    compressible_solvers = {"rhoSimpleFoam", "rhoPimpleFoam", "buoyantSimpleFoam", "buoyantPimpleFoam"}
+    buoyant_solvers = {"buoyantSimpleFoam", "buoyantPimpleFoam"}
+
     required = [
         "system/controlDict",
         "system/fvSchemes",
         "system/fvSolution",
         "0/U",
         "0/p",
-        "constant/transportProperties",
         "constant/turbulenceProperties",
     ]
+
+    if solver in compressible_solvers:
+        required.append("constant/thermophysicalProperties")
+    else:
+        required.append("constant/transportProperties")
+
+    if solver in buoyant_solvers:
+        required += ["0/T", "constant/g", "0/p_rgh"]
 
     for rel in required:
         file_path = case_dir / rel
@@ -141,7 +167,6 @@ def validate_case(case_id: str):
         if missing_p:
             errors.append(f"In 0/p mancano le boundary: {', '.join(sorted(missing_p))}")
 
-    config_file = case_dir / "config.json"
     if not config_file.exists():
         warnings.append("config.json mancante: salva la configurazione dalla GUI")
 

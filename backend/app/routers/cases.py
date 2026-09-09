@@ -1,7 +1,7 @@
 import json
 import shutil
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query
@@ -34,7 +34,7 @@ def read_meta(case_dir: Path) -> dict:
 
 
 def write_meta(case_dir: Path, meta: dict):
-    meta["updated_at"] = datetime.utcnow().isoformat()
+    meta["updated_at"] = datetime.now(timezone.utc).isoformat()
     (case_dir / "case.json").write_text(json.dumps(meta, indent=2))
 
 
@@ -57,7 +57,7 @@ def create_case(payload: CaseCreate):
 
     case_dir.mkdir(parents=True)
 
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(timezone.utc).isoformat()
 
     meta = {
         "id": case_id,
@@ -170,7 +170,7 @@ def clone_case(case_id: str, new_name: str = Query(..., min_length=1, max_length
     meta = read_meta(target)
     meta["id"] = new_id
     meta["name"] = new_name
-    meta["created_at"] = datetime.utcnow().isoformat()
+    meta["created_at"] = datetime.now(timezone.utc).isoformat()
     meta["last_job_id"] = None
 
     write_meta(target, meta)

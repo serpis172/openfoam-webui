@@ -53,6 +53,8 @@ const defaultPhysicsConfig: PhysicsConfig = {
   turbulenceModel: 'kOmegaSST',
   solver: 'simpleFoam',
   materialId: 'air',
+  temperature: 300,
+  gravity: [0, 0, -9.81],
 }
 
 export const useWizardStore = create<WizardState>((set) => ({

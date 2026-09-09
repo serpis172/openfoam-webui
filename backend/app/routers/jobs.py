@@ -222,10 +222,21 @@ def case_logs(case_id: str):
     case_dir = case_dir_or_404(case_id)
     logs = []
 
+    # ponytail: prima ritornava solo {name, size}, nessun contenuto.
+    # LogConsole nel frontend leggeva log.content, sempre undefined,
+    # mostrava JSON grezzo invece dell'output reale del solver. Include
+    # la coda di ogni log direttamente qui: evita N+1 richieste al
+    # dedicato /log/{name} per ogni file.
     for log in sorted(case_dir.glob("log.*")):
+        try:
+            lines = log.read_text(errors="ignore").splitlines()
+        except Exception:
+            lines = []
+
         logs.append({
             "name": log.name,
             "size": log.stat().st_size,
+            "tail": lines[-100:],
         })
 
     return {

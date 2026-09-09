@@ -14,7 +14,12 @@ export function ProgressSteps({ steps, current, onStepClick }: ProgressStepsProp
       {steps.map((step, index) => {
         const isCompleted = index < current
         const isCurrent = index === current
-        const isClickable = onStepClick && index <= current
+        // ponytail: prima limitava il click solo a step <= current (stile
+        // wizard bloccato). Ma tutte le pagine sono già liberamente
+        // raggiungibili dalla sidebar in qualunque ordine - bloccare qui
+        // sarebbe stato incoerente, un finto vincolo che l'utente
+        // scavalca comunque da un altro punto della UI.
+        const isClickable = !!onStepClick
 
         return (
           <React.Fragment key={step}>
