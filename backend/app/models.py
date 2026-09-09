@@ -6,6 +6,13 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 # un subprocess (worker/tasks.py). Un solver/turbulenceModel arbitrario
 # permette RCE via #codeStream nel dict o exec di binario a piacere.
 # Aggiungere qui, non rimuovere il whitelist, se serve un nuovo solver.
+#
+# DUPLICAZIONE VOLUTA, non DRY da correggere: worker/tasks.py ha la stessa
+# whitelist ALLOWED_SOLVERS ripetuta perche' config.json puo' essere
+# riscritto a mano dall'editor di testo (PUT /files/{id}/text/config.json),
+# che bypassa questa validazione pydantic - il worker e' l'ultima linea di
+# difesa prima che "solver" diventi argv[0] di un subprocess reale. Se
+# aggiungi/rimuovi un solver qui, aggiorna anche worker/tasks.py.
 ALLOWED_SOLVERS = {
     "simpleFoam", "pimpleFoam", "interFoam", "pisoFoam", "icoFoam",
     "rhoSimpleFoam", "rhoPimpleFoam", "buoyantSimpleFoam", "buoyantPimpleFoam",
@@ -88,8 +95,22 @@ class PhysicsConfig(BaseModel):
         return self
 
 
+# ponytail: geometrici, non fisici - il tipo di boundary condition per U/p/k
+# (fixedValue, zeroGradient...) resta libero perche' templates_generator.py lo
+# confronta sempre con un elif esplicito (un valore ignoto cade nel ramo
+# "else" sicuro). "name" e "patch_type" invece finiscono crudi dentro il
+# dict OpenFOAM generato (vedi templates_generator.py, boundary_field_*):
+# senza whitelist un nome tipo '"};\n#codeStream\n{...}' chiude il blocco
+# in anticipo e inietta una direttiva OpenFOAM arbitraria nel file scritto
+# su disco (potenzialmente RCE al primo run del solver). RefinementBox.name
+# aveva gia' questo pattern, qui mancava.
+ALLOWED_PATCH_TYPES = {
+    "patch", "wall", "symmetry", "symmetryPlane", "empty", "wedge", "cyclic",
+}
+
+
 class BoundaryCondition(BaseModel):
-    name: str = "inlet"
+    name: str = Field(default="inlet", min_length=1, max_length=64, pattern=r"^[a-zA-Z0-9_]+$")
     patch_type: str = "patch"
     U_type: str = "fixedValue"
     U_value: List[float] = [10.0, 0.0, 0.0]
@@ -104,6 +125,13 @@ class BoundaryCondition(BaseModel):
     # imposta (parete calda/fredda, es. le alette di un radiatore).
     T_type: str = "zeroGradient"
     T_value: float = Field(default=300.0, gt=0, description="Kelvin")
+
+    @field_validator("patch_type")
+    @classmethod
+    def check_patch_type(cls, v: str) -> str:
+        if v not in ALLOWED_PATCH_TYPES:
+            raise ValueError(f"Tipo di patch non consentito: {v!r}")
+        return v
 
 
 class RefinementDistance(BaseModel):

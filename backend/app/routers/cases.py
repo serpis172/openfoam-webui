@@ -98,7 +98,7 @@ def list_cases(
     if not settings.cases_root.exists():
         return {"items": [], "total": 0, "page": page, "size": size}
 
-    for p in sorted(settings.cases_root.iterdir(), reverse=True):
+    for p in settings.cases_root.iterdir():
         if not p.is_dir():
             continue
 
@@ -118,6 +118,13 @@ def list_cases(
             continue
 
         items.append(meta)
+
+    # ponytail: prima ordinava sorted(iterdir(), reverse=True), cioe' per
+    # nome cartella (uuid esadecimale) al contrario - un ordine sostanzialmente
+    # casuale, non "piu' recenti prima" come la Dashboard lascia intendere.
+    # created_at e' una stringa ISO 8601, l'ordinamento lessicografico
+    # coincide con quello cronologico.
+    items.sort(key=lambda m: m.get("created_at", ""), reverse=True)
 
     total = len(items)
     start = (page - 1) * size

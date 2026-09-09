@@ -35,14 +35,6 @@ def case_dir_or_404(case_id: str) -> Path:
     return case_dir
 
 
-def update_last_job(case_dir: Path, job_id: str):
-    meta_file = case_dir / "case.json"
-    if meta_file.exists():
-        meta = json.loads(meta_file.read_text())
-        meta["last_job_id"] = job_id
-        meta_file.write_text(json.dumps(meta, indent=2))
-
-
 def record_run(case_dir: Path, job_id: str, kind: str, processors: int | None):
     """Storico run per il caso: prima c'era solo last_job_id (un job
     singolo), niente storico. RunsTable nel frontend si aspettava una
