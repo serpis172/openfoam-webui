@@ -3,6 +3,7 @@ import tempfile
 import zipfile
 from pathlib import Path
 
+import anyio
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from starlette.background import BackgroundTask
@@ -46,8 +47,29 @@ def list_files(case_id: str):
     }
 
 
+async def _write_chunk_to_disk(target: Path, chunk: bytes) -> None:
+    """Helper function to write a chunk to disk in a thread pool.
+    
+    Prevents blocking the async event loop during I/O operations.
+    """
+    def _sync_write():
+        with target.open("ab") as out:
+            out.write(chunk)
+    
+    await anyio.to_thread.run_sync(_sync_write)
+
+
 @router.post("/{case_id}/upload/{rel_path:path}")
 async def upload_file(case_id: str, rel_path: str, file: UploadFile = File(...)):
+    """Upload a file to a case directory with async I/O operations.
+    
+    Security notes (S3 hardening):
+    - File writes are offloaded to a thread pool via anyio.to_thread.run_sync()
+      to prevent blocking the uvicorn event loop during disk I/O.
+    - Maximum file size is enforced via settings.max_upload_mb.
+    - File paths are validated with safe_join() to prevent directory traversal.
+    - Geometry extensions are validated against settings.allowed_geometry_ext_list.
+    """
     case_dir = case_dir_or_404(case_id)
 
     rel_path = rel_path.strip()
@@ -68,17 +90,24 @@ async def upload_file(case_id: str, rel_path: str, file: UploadFile = File(...))
     size = 0
 
     try:
-        with target.open("wb") as out:
-            while chunk := await file.read(1024 * 1024):
-                size += len(chunk)
+        # Create the file (synchronously, before the loop)
+        target.touch()
+        
+        # Write chunks asynchronously via thread pool
+        while chunk := await file.read(1024 * 1024):
+            size += len(chunk)
 
-                if size > max_bytes:
-                    raise HTTPException(status_code=413, detail="File troppo grande")
+            if size > max_bytes:
+                raise HTTPException(status_code=413, detail="File troppo grande")
 
-                out.write(chunk)
+            # Offload disk I/O to thread pool to avoid blocking the event loop
+            await _write_chunk_to_disk(target, chunk)
     except HTTPException:
         target.unlink(missing_ok=True)
         raise
+    except Exception as e:
+        target.unlink(missing_ok=True)
+        raise HTTPException(status_code=500, detail=f"Errore durante l'upload: {str(e)}")
 
     return {
         "status": "uploaded",
