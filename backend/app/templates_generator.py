@@ -7,6 +7,26 @@ def foam_vector(values) -> str:
     return "(" + " ".join(str(v) for v in values) + ")"
 
 
+def foam_header(class_name: str, object_name: str, location: str) -> str:
+    """Blocco FoamFile obbligatorio in testa a ogni file che OpenFOAM
+    legge o scrive. Non e' un commento decorativo: IOobject::readHeader
+    pretende "FoamFile" come primo token del file, e senza whitelist di
+    questa forma un blockMesh/simpleFoam/checkMesh rifiuta il file con un
+    FatalIOError - non un warning, un errore bloccante. Vedi la guida
+    ufficiale OpenFOAM, sezione "Basic input/output file format"."""
+    return f"""FoamFile
+{{
+    version     2.0;
+    format      ascii;
+    class       {class_name};
+    location    "{location}";
+    object      {object_name};
+}}
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+
+"""
+
+
 # ponytail: "SIMPLE if solver=='simpleFoam' else PIMPLE" era sbagliato
 # per metà della whitelist - rhoSimpleFoam/buoyantSimpleFoam sono
 # steady-state (SIMPLE) esattamente come simpleFoam, ma finivano con un
@@ -29,8 +49,18 @@ def is_compressible(solver: str) -> bool:
     return solver in COMPRESSIBLE_SOLVERS
 
 
-def write_file(path: Path, content: str):
+def write_file(path: Path, content: str, class_name: str | None = None):
+    """class_name=None per file che non sono dict OpenFOAM (case.json,
+    config.json - metadati interni, non letti da OpenFOAM). Quando
+    class_name e' dato, antepone il FoamFile header obbligatorio;
+    object/location si derivano dal path stesso, non serve ripeterli
+    a ogni chiamata."""
     path.parent.mkdir(parents=True, exist_ok=True)
+
+    if class_name is not None:
+        header = foam_header(class_name, path.name, path.parent.name)
+        content = header + content
+
     path.write_text(content, encoding="utf-8")
 
 
@@ -148,7 +178,7 @@ functions
 }}
 """
 
-    write_file(case_dir / "system/controlDict", content)
+    write_file(case_dir / "system/controlDict", content, "dictionary")
 
 
 def generate_fv_schemes(case_dir: Path, solver: str):
@@ -202,7 +232,7 @@ snGradSchemes
 }}
 """
 
-    write_file(case_dir / "system/fvSchemes", content)
+    write_file(case_dir / "system/fvSchemes", content, "dictionary")
 
 
 def generate_fv_solution(case_dir: Path, solver: str):
@@ -305,7 +335,7 @@ relaxationFactors
 }}
 """
 
-    write_file(case_dir / "system/fvSolution", content)
+    write_file(case_dir / "system/fvSolution", content, "dictionary")
 
 
 def generate_decompose_par_dict(case_dir: Path, config: CaseConfig):
@@ -320,7 +350,7 @@ distributed     no;
 roots           ( );
 """
 
-    write_file(case_dir / "system/decomposeParDict", content)
+    write_file(case_dir / "system/decomposeParDict", content, "dictionary")
 
 
 def generate_block_mesh_dict(case_dir: Path, config: CaseConfig):
@@ -397,7 +427,7 @@ mergePatchPairs
 );
 """
 
-    write_file(case_dir / "system/blockMeshDict", content)
+    write_file(case_dir / "system/blockMeshDict", content, "dictionary")
 
 
 def generate_snappy_hex_mesh_dict(case_dir: Path, config: CaseConfig):
@@ -549,7 +579,7 @@ debug 0;
 mergeTolerance 1e-6;
 """
 
-    write_file(case_dir / "system/snappyHexMeshDict", content)
+    write_file(case_dir / "system/snappyHexMeshDict", content, "dictionary")
 
 
 def generate_transport_properties(case_dir: Path, config: CaseConfig):
@@ -558,7 +588,7 @@ def generate_transport_properties(case_dir: Path, config: CaseConfig):
 nu              [0 2 -1 0 0 0 0] {config.physics.nu};
 """
 
-    write_file(case_dir / "constant/transportProperties", content)
+    write_file(case_dir / "constant/transportProperties", content, "dictionary")
 
 
 def generate_thermophysical_properties(case_dir: Path, config: CaseConfig):
@@ -601,14 +631,14 @@ mixture
 }}
 """
 
-    write_file(case_dir / "constant/thermophysicalProperties", content)
+    write_file(case_dir / "constant/thermophysicalProperties", content, "dictionary")
 
 
 def generate_g(case_dir: Path, config: CaseConfig):
     content = f"""dimensions      [0 1 -2 0 0 0 0];
 value           {foam_vector(config.physics.gravity)};
 """
-    write_file(case_dir / "constant/g", content)
+    write_file(case_dir / "constant/g", content, "uniformDimensionedVectorField")
 
 
 def generate_turbulence_properties(case_dir: Path, config: CaseConfig):
@@ -630,7 +660,7 @@ def generate_turbulence_properties(case_dir: Path, config: CaseConfig):
 {block}
 """
 
-    write_file(case_dir / "constant/turbulenceProperties", content)
+    write_file(case_dir / "constant/turbulenceProperties", content, "dictionary")
 
 
 def boundary_field_U(config: CaseConfig) -> str:
@@ -760,7 +790,7 @@ boundaryField
 }}
 """
 
-    write_file(case_dir / "0/U", content)
+    write_file(case_dir / "0/U", content, "volVectorField")
 
 
 def generate_p(case_dir: Path, config: CaseConfig):
@@ -779,7 +809,7 @@ boundaryField
 {boundary_field_p(config)}
 }}
 """
-        write_file(case_dir / "0/p_rgh", p_rgh_content)
+        write_file(case_dir / "0/p_rgh", p_rgh_content, "volScalarField")
 
         p_content = f"""dimensions      [1 -1 -2 0 0 0 0];
 
@@ -790,7 +820,7 @@ boundaryField
 {boundary_field_p(config, calculated=True)}
 }}
 """
-        write_file(case_dir / "0/p", p_content)
+        write_file(case_dir / "0/p", p_content, "volScalarField")
         return
 
     content = f"""dimensions      [0 2 -2 0 0 0 0];
@@ -803,7 +833,7 @@ boundaryField
 }}
 """
 
-    write_file(case_dir / "0/p", content)
+    write_file(case_dir / "0/p", content, "volScalarField")
 
 
 def generate_T(case_dir: Path, config: CaseConfig):
@@ -819,7 +849,7 @@ boundaryField
 {boundary_field_T(config)}
 }}
 """
-    write_file(case_dir / "0/T", content)
+    write_file(case_dir / "0/T", content, "volScalarField")
 
 
 def generate_alphat(case_dir: Path, config: CaseConfig):
@@ -848,7 +878,7 @@ boundaryField
 {chr(10).join(entries)}
 }}
 """
-    write_file(case_dir / "0/alphat", content)
+    write_file(case_dir / "0/alphat", content, "volScalarField")
 
 
 def generate_turbulence_fields(case_dir: Path, config: CaseConfig, solver: str):
@@ -862,7 +892,7 @@ boundaryField
 {boundary_field_scalar(config, 'k')}
 }}
 """
-        write_file(case_dir / "0/k", k_content)
+        write_file(case_dir / "0/k", k_content, "volScalarField")
 
         omega_content = f"""dimensions      [0 0 -1 0 0 0 0];
 
@@ -873,4 +903,4 @@ boundaryField
 {boundary_field_scalar(config, 'omega')}
 }}
 """
-        write_file(case_dir / "0/omega", omega_content)
+        write_file(case_dir / "0/omega", omega_content, "volScalarField")

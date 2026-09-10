@@ -3,6 +3,7 @@ import tempfile
 import zipfile
 from pathlib import Path
 
+import anyio
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from starlette.background import BackgroundTask
@@ -46,8 +47,30 @@ def list_files(case_id: str):
     }
 
 
+async def _write_chunk_to_disk(out, chunk: bytes) -> None:
+    """Scrive un chunk sul file handle gia' aperto, in un thread pool.
+
+    ponytail: la prima versione apriva il file in append mode *dentro*
+    questa funzione, quindi ogni chunk da 1MB faceva un open+seek-a-EOF+
+    close separato - per un upload da 2GB sono ~2000 cicli di apertura
+    file invece di uno solo. Qui il file handle si apre una volta sola nel
+    chiamante e viene passato gia' aperto; questa funzione offload solo la
+    write vera e propria sul thread pool.
+    """
+    await anyio.to_thread.run_sync(out.write, chunk)
+
+
 @router.post("/{case_id}/upload/{rel_path:path}")
 async def upload_file(case_id: str, rel_path: str, file: UploadFile = File(...)):
+    """Upload a file to a case directory with async I/O operations.
+    
+    Security notes (S3 hardening):
+    - File writes are offloaded to a thread pool via anyio.to_thread.run_sync()
+      to prevent blocking the uvicorn event loop during disk I/O.
+    - Maximum file size is enforced via settings.max_upload_mb.
+    - File paths are validated with safe_join() to prevent directory traversal.
+    - Geometry extensions are validated against settings.allowed_geometry_ext_list.
+    """
     case_dir = case_dir_or_404(case_id)
 
     rel_path = rel_path.strip()
@@ -75,8 +98,20 @@ async def upload_file(case_id: str, rel_path: str, file: UploadFile = File(...))
                 if size > max_bytes:
                     raise HTTPException(status_code=413, detail="File troppo grande")
 
-                out.write(chunk)
+                # Offload disk I/O to thread pool to avoid blocking the event loop
+                await _write_chunk_to_disk(out, chunk)
     except HTTPException:
+        target.unlink(missing_ok=True)
+        raise
+    except Exception:
+        # ponytail: qui prima c'era "raise HTTPException(500, detail=f"...{str(e)}")"
+        # che rimandava il messaggio dell'eccezione originale (path su disco,
+        # errno, dettagli del filesystem) diretto al client - esattamente
+        # quello che il global_exception_handler in main.py esiste per
+        # evitare ("Errori API senza output sensibili" nel README). Un
+        # semplice "raise" nuda lascia gestire l'errore al handler globale,
+        # che logga il dettaglio vero server-side e risponde al client con
+        # un messaggio generico.
         target.unlink(missing_ok=True)
         raise
 

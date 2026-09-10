@@ -71,7 +71,8 @@ pytest tests -v
 
 ## Sicurezza
 
-- Terminale disabilitato di default.
+- Terminale disabilitato di default (ora eseguibile davvero via worker se
+  abilitato con `ENABLE_TERMINAL=true` - prima era uno stub inerte).
 - Upload limitati.
 - Path traversal bloccato.
 - Redis con password.
@@ -79,6 +80,15 @@ pytest tests -v
 - Annullamento job con kill del process group.
 - Validazione file OpenFOAM.
 - Errori API senza output sensibili.
+- Nomi/tipi di boundary condition validati con whitelist prima di finire nei
+  dict OpenFOAM generati (`0/U`, `0/p`, ...).
+
+**Limite noto:** la API key (`X-API-Key`) è pensata come lucchetto per un
+deploy locale/mono-utente, non come autenticazione vera. È iniettata a
+build-time nel bundle frontend (`VITE_API_KEY`), quindi visibile a chiunque
+apra i devtools del browser. Va bene per `localhost` o una rete fidata; se
+il servizio viene esposto oltre quello, serve un meccanismo di sessione
+lato server prima, non solo questa chiave. Vedi `ROADMAP.md`, voce S4.
 
 ## Note
 

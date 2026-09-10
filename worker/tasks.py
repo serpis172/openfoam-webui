@@ -336,3 +336,60 @@ def run_openfoam_case(self, case_id):
         "solver": solver,
         "processors": processors,
     }
+
+
+# ponytail: DUPLICAZIONE VOLUTA con backend/app/routers/terminal.py::ALLOWED_COMMANDS,
+# stesso motivo di ALLOWED_SOLVERS sopra - il worker e' l'ultima linea di
+# difesa prima che il nome del comando diventi argv reale. Qui il valore e'
+# l'argv list intera (non solo il nome del binario): un utente non deve
+# poter passare flag arbitrari a un comando altrimenti innocuo. Se aggiungi
+# un comando qui, aggiungilo anche nel router con la stessa chiave.
+ALLOWED_TERMINAL_COMMANDS = {
+    "ls": ["ls", "-lah"],
+    "pwd": ["pwd"],
+    "foamInfo": ["foamInfo"],
+    "checkMesh": ["checkMesh"],
+    "foamToVTK": ["foamToVTK", "-latestTime"],
+}
+
+# comandi di ispezione rapida: se durano piu' di 2 minuti qualcosa non va
+# (a differenza di una run solver, che puo' legittimamente durare ore).
+TERMINAL_COMMAND_TIMEOUT_SECONDS = 120
+
+
+@celery.task(bind=True, name="tasks.run_terminal_command")
+def run_terminal_command(self, case_id, command_name):
+    """Esegue un comando allowlisted nella directory del caso, riusando
+    la stessa infrastruttura di run_step (log su file, cancellazione via
+    redis, timeout, kill del process group) usata per mesh/solver.
+    L'endpoint terminal.py era finora uno stub che non eseguiva nulla."""
+    job_id = self.request.id
+    case_dir = CASE_ROOT / case_id
+
+    if not case_dir.exists():
+        raise FileNotFoundError(f"Caso non trovato: {case_id}")
+
+    if command_name not in ALLOWED_TERMINAL_COMMANDS:
+        raise ValueError(f"Comando non consentito: {command_name!r}")
+
+    args = ALLOWED_TERMINAL_COMMANDS[command_name]
+    step_name = f"terminal-{command_name}"
+
+    run_step(
+        self,
+        job_id,
+        case_dir,
+        step_name,
+        args,
+        timeout_seconds=TERMINAL_COMMAND_TIMEOUT_SECONDS,
+    )
+
+    log_path = case_dir / f"log.{step_name}"
+    output = log_path.read_text(errors="ignore") if log_path.exists() else ""
+
+    return {
+        "status": "completed",
+        "case_id": case_id,
+        "command": command_name,
+        "output": output,
+    }
