@@ -27,7 +27,7 @@ class TestBoundaryPatchValidation:
             CaseConfig(
                 boundaries=[
                     BoundaryCondition(name="inlet"),
-                    BoundaryCondition(name="undefined_patch"),  # ← Should fail
+                    BoundaryCondition(name="undefined_patch"),  # <- Should fail
                 ]
             )
     
@@ -58,7 +58,7 @@ class TestBoundaryPatchValidation:
                 ),
                 boundaries=[
                     BoundaryCondition(name="inlet"),
-                    BoundaryCondition(name="undefined_patch"),  # ← Should fail
+                    BoundaryCondition(name="undefined_patch"),  # <- Should fail
                 ]
             )
     

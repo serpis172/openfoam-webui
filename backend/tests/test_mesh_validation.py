@@ -183,7 +183,7 @@ class TestMeshValidationReport:
         
         report_text = format_mesh_report(mesh_report)
         
-        assert "✅" in report_text or "PASSED" in report_text
+        assert "PASSED" in report_text
         assert "5000" in report_text
         assert "High aspect ratio" in report_text
     
@@ -198,7 +198,7 @@ class TestMeshValidationReport:
         
         report_text = format_mesh_report(mesh_report)
         
-        assert "❌" in report_text or "FAILED" in report_text
+        assert "FAILED" in report_text
         assert "zero cells" in report_text.lower()
     
     def test_format_report_includes_metrics(self):

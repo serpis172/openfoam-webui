@@ -6,7 +6,13 @@ from pathlib import Path
 
 import pytest
 
-from file_locking import FileLock, FileLockError, check_lock_status, mesh_generation_lock
+try:
+    from worker.file_locking import FileLock, FileLockError, check_lock_status, mesh_generation_lock
+except ImportError:
+    # Fallback if running from different directory
+    import sys
+    sys.path.insert(0, str(Path(__file__).parent.parent))
+    from file_locking import FileLock, FileLockError, check_lock_status, mesh_generation_lock
 
 
 class TestFileLockBasic:
