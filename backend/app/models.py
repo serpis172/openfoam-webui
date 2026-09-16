@@ -1,3 +1,4 @@
+from pathlib import Path
 from typing import List, Optional
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -110,15 +111,30 @@ ALLOWED_PATCH_TYPES = {
 
 
 class BoundaryCondition(BaseModel):
-    name: str = Field(default="inlet", min_length=1, max_length=64, pattern=r"^[a-zA-Z0-9_]+$")
+    # ponytail: pattern allargato da ^[a-zA-Z0-9_]+$ a includere '.' e '-'
+    # (vedi Bug #3/MESHING_FIXES.md, test_stl_with_multiple_dots): il nome
+    # patch per snappyHexMesh viene derivato dal filename STL senza
+    # estensione (Path.stem), e file STL reali hanno spesso nomi come
+    # "geometry.v2.final.stl". Punto e trattino non abilitano l'injection
+    # descritta sopra (non chiudono un blocco dict, non introducono
+    # direttive OpenFOAM) - restano esclusi solo i caratteri realmente
+    # pericolosi: {} ; # " ' \ newline e gli spazi.
+    name: str = Field(default="inlet", min_length=1, max_length=64, pattern=r"^[a-zA-Z0-9_.-]+$")
     patch_type: str = "patch"
     U_type: str = "fixedValue"
     U_value: List[float] = [10.0, 0.0, 0.0]
     p_type: str = "zeroGradient"
     p_value: float = 0.0
-    k_type: str = "fixedValue"
+    # ponytail: a differenza di U_type/p_type/T_type (confrontati sempre
+    # con un elif esplicito - un valore ignoto cade in un ramo sicuro,
+    # il valore stesso non finisce mai nel dict), k_type/omega_type
+    # venivano scritti CRUDI nel dict per i patch non-wall
+    # (templates_generator.py::boundary_field_scalar: f"type {bc.k_type};").
+    # Stessa classe di injection di S1 (bc.name) - trovata convertendo
+    # questo campo a foamlib per la Fase 2, non nell'audit iniziale.
+    k_type: str = Field(default="fixedValue", pattern=r"^[a-zA-Z0-9_]+$")
     k_value: float = 0.1
-    omega_type: str = "fixedValue"
+    omega_type: str = Field(default="fixedValue", pattern=r"^[a-zA-Z0-9_]+$")
     omega_value: float = 1.0
     # Solo per solver con scambio termico. zeroGradient = parete
     # adiabatica (default, nessun scambio); fixedValue = temperatura
@@ -240,3 +256,37 @@ class CaseConfig(BaseModel):
         FunctionObject(type="forces", name="forces")
     ]
     run: RunSettings = RunSettings()
+
+    @model_validator(mode="after")
+    def validate_boundary_patches_exist(self):
+        """Bug #3 (MESHING_FIXES.md): una boundary condition che referenzia
+        un patch inesistente passava questa validazione e falliva molto più
+        tardi, con un errore OpenFOAM criptico ("cannot find patch ...")
+        durante l'inizializzazione del solver - non durante la generazione
+        mesh, che completava "con successo" nonostante il caso fosse rotto.
+        Qui il fallimento è immediato, in fase di validazione della config,
+        e dice esattamente quali patch sono realmente disponibili."""
+        available = self._available_patches()
+
+        for bc in self.boundaries:
+            if bc.name not in available:
+                raise ValueError(
+                    f"Boundary condition '{bc.name}' does not match any mesh patch. "
+                    f"Available patches: {', '.join(available)}"
+                )
+
+        return self
+
+    def _available_patches(self) -> list[str]:
+        """blockMesh genera sempre questi 3 patch (vedi
+        generate_block_mesh_dict in templates_generator.py, hardcoded).
+        snappyHexMesh aggiunge un patch dalla geometria STL, con nome
+        derivato dal filename senza estensione (Path.stem gestisce
+        correttamente anche filename con più punti, es.
+        "geometry.v2.final.stl" -> "geometry.v2.final")."""
+        patches = {"inlet", "outlet", "walls"}
+
+        if self.mesh.mesh_type == "snappyHexMesh" and self.mesh.stl_file:
+            patches.add(Path(self.mesh.stl_file).stem)
+
+        return sorted(patches)

@@ -2,6 +2,30 @@ import json
 from pathlib import Path
 from app.models import CaseConfig, BoundaryCondition
 
+# ponytail: unico import dal nuovo package foam_templates per ora - solo
+# 0/U e' stato convertito a foamlib (ROADMAP.md, Fase 2, punto 4: "un
+# file alla volta"). generate_U/boundary_field_U f-string sono state
+# rimosse da qui, sostituite da questa; gli altri campi (0/p, 0/T, 0/k,
+# 0/omega, i dict di system/ e constant/) restano sul vecchio percorso
+# f-string finche' non vengono convertiti a loro volta, uno alla volta,
+# con lo stesso schema di test di confronto usato per U (vedi
+# backend/tests/test_foam_templates.py).
+#
+# solver_info: STEADY_STATE_SOLVERS/BUOYANT_SOLVERS/COMPRESSIBLE_SOLVERS e
+# le funzioni is_buoyant/is_compressible/solver_algorithm vivevano qui
+# prima - spostate in foam_templates/solver_info.py per evitare un import
+# circolare (write_U qui sopra importa da foam_templates, quindi
+# foam_templates non puo' importare da questo file).
+from app.foam_templates.fields import write_U, write_p, write_g, write_T, write_alphat, write_turbulence_fields
+from app.foam_templates.solver_info import (
+    BUOYANT_SOLVERS,
+    COMPRESSIBLE_SOLVERS,
+    STEADY_STATE_SOLVERS,
+    is_buoyant,
+    is_compressible,
+    solver_algorithm,
+)
+
 
 def foam_vector(values) -> str:
     return "(" + " ".join(str(v) for v in values) + ")"
@@ -25,28 +49,6 @@ def foam_header(class_name: str, object_name: str, location: str) -> str:
 // * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
 
 """
-
-
-# ponytail: "SIMPLE if solver=='simpleFoam' else PIMPLE" era sbagliato
-# per metà della whitelist - rhoSimpleFoam/buoyantSimpleFoam sono
-# steady-state (SIMPLE) esattamente come simpleFoam, ma finivano con un
-# blocco PIMPLE nel fvSolution (nome algoritmo sbagliato, il solver si
-# sarebbe rifiutato di leggere il dict all'avvio).
-STEADY_STATE_SOLVERS = {"simpleFoam", "rhoSimpleFoam", "buoyantSimpleFoam"}
-BUOYANT_SOLVERS = {"buoyantSimpleFoam", "buoyantPimpleFoam"}
-COMPRESSIBLE_SOLVERS = {"rhoSimpleFoam", "rhoPimpleFoam", "buoyantSimpleFoam", "buoyantPimpleFoam"}
-
-
-def solver_algorithm(solver: str) -> str:
-    return "SIMPLE" if solver in STEADY_STATE_SOLVERS else "PIMPLE"
-
-
-def is_buoyant(solver: str) -> bool:
-    return solver in BUOYANT_SOLVERS
-
-
-def is_compressible(solver: str) -> bool:
-    return solver in COMPRESSIBLE_SOLVERS
 
 
 def write_file(path: Path, content: str, class_name: str | None = None):
@@ -89,17 +91,17 @@ def generate_case_files(case_dir: Path, config: CaseConfig, meta: dict):
 
     generate_turbulence_properties(case_dir, config)
 
-    generate_U(case_dir, config)
-    generate_p(case_dir, config)
+    write_U(case_dir, config)
+    write_p(case_dir, config)
 
     if is_buoyant(solver):
-        generate_g(case_dir, config)
-        generate_T(case_dir, config)
+        write_g(case_dir, config)
+        write_T(case_dir, config)
         if not config.physics.laminar:
-            generate_alphat(case_dir, config)
+            write_alphat(case_dir, config)
 
     if not config.physics.laminar:
-        generate_turbulence_fields(case_dir, config, solver)
+        write_turbulence_fields(case_dir, config)
 
 
 def generate_control_dict(case_dir: Path, config: CaseConfig, solver: str):
@@ -634,13 +636,6 @@ mixture
     write_file(case_dir / "constant/thermophysicalProperties", content, "dictionary")
 
 
-def generate_g(case_dir: Path, config: CaseConfig):
-    content = f"""dimensions      [0 1 -2 0 0 0 0];
-value           {foam_vector(config.physics.gravity)};
-"""
-    write_file(case_dir / "constant/g", content, "uniformDimensionedVectorField")
-
-
 def generate_turbulence_properties(case_dir: Path, config: CaseConfig):
     if config.physics.laminar:
         simulation = "laminar"
@@ -662,245 +657,3 @@ def generate_turbulence_properties(case_dir: Path, config: CaseConfig):
 
     write_file(case_dir / "constant/turbulenceProperties", content, "dictionary")
 
-
-def boundary_field_U(config: CaseConfig) -> str:
-    entries = []
-
-    for bc in config.boundaries:
-        entry = f"{bc.name}\n{{\n"
-
-        if bc.U_type == "fixedValue":
-            entry += "    type fixedValue;\n"
-            entry += f"    value uniform {foam_vector(bc.U_value)};\n"
-        elif bc.U_type == "noSlip":
-            entry += "    type noSlip;\n"
-        elif bc.U_type == "slip":
-            entry += "    type slip;\n"
-        elif bc.U_type == "zeroGradient":
-            entry += "    type zeroGradient;\n"
-        elif bc.U_type == "inletOutlet":
-            entry += "    type inletOutlet;\n"
-            entry += f"    inletValue uniform {foam_vector(bc.U_value)};\n"
-            entry += f"    value uniform {foam_vector(bc.U_value)};\n"
-        else:
-            entry += "    type zeroGradient;\n"
-
-        entry += "}\n"
-        entries.append(entry)
-
-    return "\n".join(entries)
-
-
-def boundary_field_p(config: CaseConfig, calculated: bool = False) -> str:
-    entries = []
-
-    for bc in config.boundaries:
-        entry = f"{bc.name}\n{{\n"
-
-        if calculated:
-            # per 0/p (assoluto) quando il solver risolve p_rgh: p viene
-            # ricalcolato dal solver ad ogni iterazione, tranne dove
-            # serve un valore esplicito (patch a pressione fissa).
-            if bc.p_type == "fixedValue":
-                entry += "    type calculated;\n"
-                entry += f"    value uniform {bc.p_value};\n"
-            else:
-                entry += "    type calculated;\n"
-                entry += "    value uniform 0;\n"
-        elif bc.p_type == "fixedValue":
-            entry += "    type fixedValue;\n"
-            entry += f"    value uniform {bc.p_value};\n"
-        elif bc.p_type == "zeroGradient":
-            entry += "    type zeroGradient;\n"
-        else:
-            entry += "    type zeroGradient;\n"
-
-        entry += "}\n"
-        entries.append(entry)
-
-    return "\n".join(entries)
-
-
-def boundary_field_scalar(config: CaseConfig, field: str) -> str:
-    entries = []
-
-    for bc in config.boundaries:
-        entry = f"{bc.name}\n{{\n"
-
-        if bc.patch_type == "wall":
-            if field == "k":
-                entry += "    type kqRWallFunction;\n"
-                entry += f"    value uniform {bc.k_value};\n"
-            elif field == "omega":
-                entry += "    type omegaWallFunction;\n"
-                entry += f"    value uniform {bc.omega_value};\n"
-            else:
-                entry += "    type zeroGradient;\n"
-        else:
-            if field == "k":
-                entry += f"    type {bc.k_type};\n"
-                entry += f"    value uniform {bc.k_value};\n"
-            elif field == "omega":
-                entry += f"    type {bc.omega_type};\n"
-                entry += f"    value uniform {bc.omega_value};\n"
-
-        entry += "}\n"
-        entries.append(entry)
-
-    return "\n".join(entries)
-
-
-def boundary_field_T(config: CaseConfig) -> str:
-    """fixedValue = temperatura imposta (parete calda/fredda, es. le
-    alette di un radiatore, o un flusso in ingresso a temperatura nota).
-    zeroGradient = adiabatica/nessuno scambio. inletOutlet = si comporta
-    come un ingresso quando il flusso entra, zeroGradient quando esce
-    (utile su outlet dove non si vuole imporre una temperatura fissa)."""
-    entries = []
-
-    for bc in config.boundaries:
-        entry = f"{bc.name}\n{{\n"
-
-        if bc.T_type == "fixedValue":
-            entry += "    type fixedValue;\n"
-            entry += f"    value uniform {bc.T_value};\n"
-        elif bc.T_type == "inletOutlet":
-            entry += "    type inletOutlet;\n"
-            entry += f"    inletValue uniform {bc.T_value};\n"
-            entry += f"    value uniform {bc.T_value};\n"
-        else:
-            entry += "    type zeroGradient;\n"
-
-        entry += "}\n"
-        entries.append(entry)
-
-    return "\n".join(entries)
-
-
-def generate_U(case_dir: Path, config: CaseConfig):
-    internal = foam_vector(config.physics.velocity)
-
-    content = f"""dimensions      [0 1 -1 0 0 0 0];
-
-internalField   uniform {internal};
-
-boundaryField
-{{
-{boundary_field_U(config)}
-}}
-"""
-
-    write_file(case_dir / "0/U", content, "volVectorField")
-
-
-def generate_p(case_dir: Path, config: CaseConfig):
-    if is_buoyant(config.physics.solver):
-        # ponytail: i solver buoyant risolvono p_rgh e derivano p a
-        # runtime (p = p_rgh + rho*g*h), ma vogliono comunque trovare
-        # 0/p_rgh in avvio E un 0/p iniziale coerente per le condizioni
-        # al contorno che referenziano la pressione assoluta - struttura
-        # identica al tutorial ufficiale buoyantSimpleFoam/hotRoom.
-        p_rgh_content = f"""dimensions      [1 -1 -2 0 0 0 0];
-
-internalField   uniform {config.physics.pressure};
-
-boundaryField
-{{
-{boundary_field_p(config)}
-}}
-"""
-        write_file(case_dir / "0/p_rgh", p_rgh_content, "volScalarField")
-
-        p_content = f"""dimensions      [1 -1 -2 0 0 0 0];
-
-internalField   uniform {config.physics.pressure};
-
-boundaryField
-{{
-{boundary_field_p(config, calculated=True)}
-}}
-"""
-        write_file(case_dir / "0/p", p_content, "volScalarField")
-        return
-
-    content = f"""dimensions      [0 2 -2 0 0 0 0];
-
-internalField   uniform {config.physics.pressure};
-
-boundaryField
-{{
-{boundary_field_p(config)}
-}}
-"""
-
-    write_file(case_dir / "0/p", content, "volScalarField")
-
-
-def generate_T(case_dir: Path, config: CaseConfig):
-    """Solo per solver con scambio termico. Senza questo file
-    buoyantSimpleFoam/buoyantPimpleFoam non partono nemmeno (il campo T
-    e' obbligatorio per risolvere l'equazione dell'energia)."""
-    content = f"""dimensions      [0 0 0 1 0 0 0];
-
-internalField   uniform {config.physics.temperature};
-
-boundaryField
-{{
-{boundary_field_T(config)}
-}}
-"""
-    write_file(case_dir / "0/T", content, "volScalarField")
-
-
-def generate_alphat(case_dir: Path, config: CaseConfig):
-    """Diffusività termica turbolenta: richiesta da qualunque solver
-    compressibile con turbolenza RAS attiva. Senza, i solver buoyant si
-    fermano subito cercando 0/alphat che non esiste."""
-    entries = []
-    for bc in config.boundaries:
-        entry = f"{bc.name}\n{{\n"
-        if bc.patch_type == "wall":
-            entry += "    type alphatJayatillekeWallFunction;\n"
-            entry += "    Prt 0.85;\n"
-            entry += "    value uniform 0;\n"
-        else:
-            entry += "    type calculated;\n"
-            entry += "    value uniform 0;\n"
-        entry += "}\n"
-        entries.append(entry)
-
-    content = f"""dimensions      [1 -1 -1 0 0 0 0];
-
-internalField   uniform 0;
-
-boundaryField
-{{
-{chr(10).join(entries)}
-}}
-"""
-    write_file(case_dir / "0/alphat", content, "volScalarField")
-
-
-def generate_turbulence_fields(case_dir: Path, config: CaseConfig, solver: str):
-    if config.physics.turbulence in ["kOmegaSST", "kEpsilon"]:
-        k_content = f"""dimensions      [0 2 -2 0 0 0 0];
-
-internalField   uniform 0.1;
-
-boundaryField
-{{
-{boundary_field_scalar(config, 'k')}
-}}
-"""
-        write_file(case_dir / "0/k", k_content, "volScalarField")
-
-        omega_content = f"""dimensions      [0 0 -1 0 0 0 0];
-
-internalField   uniform 1.0;
-
-boundaryField
-{{
-{boundary_field_scalar(config, 'omega')}
-}}
-"""
-        write_file(case_dir / "0/omega", omega_content, "volScalarField")

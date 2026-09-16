@@ -87,6 +87,26 @@ def test_boundary_condition_patch_type_whitelisted():
     assert response.status_code == 422
 
 
+def test_boundary_condition_k_omega_type_rejects_dict_injection():
+    """k_type/omega_type finivano crudi nel dict per i patch non-wall
+    (templates_generator.py::boundary_field_scalar: f"type {bc.k_type};"),
+    a differenza di U_type/p_type/T_type che passano sempre per un elif
+    esplicito. Stessa classe di injection di S1 (bc.name), trovata
+    convertendo questo campo a foamlib per la Fase 2."""
+    response = client.post(
+        "/api/cases/", json={"name": "Caso k injection", "solver": "simpleFoam"}
+    )
+    case_id = response.json()["id"]
+
+    payload = {
+        "boundaries": [
+            {"name": "inlet", "k_type": "fixedValue\n}\n#codeStream\n{\n"}
+        ]
+    }
+    response = client.post(f"/api/cases/{case_id}/config", json=payload)
+    assert response.status_code == 422
+
+
 def test_list_cases_sorted_by_creation_date_not_uuid():
     """list_cases deve restituire i casi piu' recenti per primi. Prima
     ordinava per nome cartella (uuid esadecimale casuale), non per
