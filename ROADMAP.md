@@ -142,6 +142,7 @@ tracciabilità dell'audit completo.
 | S3b | **[FATTO]** Il fix di S3 applicato via PR `phase-1-security-s3-async-upload` (merged su GitHub prima che rivedessi il codice) introduceva una regressione: `except Exception as e: raise HTTPException(500, detail=f"...{str(e)}")` rimandava il messaggio dell'eccezione originale (path su disco, dettagli filesystem) diretto al client, bypassando il `global_exception_handler` già presente in `main.py` che esiste apposta per evitarlo ("Errori API senza output sensibili", principio già nel README). Stessa PR apriva/chiudeva il file una volta per ogni chunk da 1MB in append mode invece di tenerlo aperto — corretto ma inutilmente costoso su file grandi (~2000 open/close per un upload da 2GB). | `backend/app/routers/files.py` | 3 | 3 | 1 | 18 |
 | S4 | La API key è iniettata a **build-time** nel bundle frontend (`VITE_API_KEY`), quindi visibile in chiaro a chiunque apra la pagina con devtools. Documentato correttamente come "lucchetto sulla porta" per deploy locale — ma se il servizio viene esposto oltre `localhost` (il README parla esplicitamente di "prima di esporre il servizio"), questa chiave non protegge da nessuno che sappia guardare il bundle JS. | `frontend/src/api/client.ts`, `backend/app/security.py` | 4 | 3 | 4 | 7 |
 | S5 | **[FATTO]** `terminal.py`: l'endpoint era uno stub che non eseguiva nulla (`"Esecuzione ... disponibile solo con integrazione worker"`), ma restava comunque montato ed era menzionato nel README come feature di sicurezza ("Terminale disabilitato di default"). Un endpoint che promette una funzione di sicurezza ma non fa nulla è più confusione che rischio, ma andava chiarito. | `backend/app/routers/terminal.py` | 2 | 1 | 2 | 4.5 |
+| S6 | **[FATTO]** Stessa classe di S1: `k_type`/`omega_type` finivano crudi nel dict per i patch non-wall (`boundary_field_scalar`: `f"type {bc.k_type};"`) — a differenza di `U_type`/`p_type`/`T_type` (sempre confrontati con un `elif` esplicito, il valore non finisce mai nel file), questi due erano interpolati direttamente. Trovata convertendo il campo a foamlib per la Fase 2, non nell'audit iniziale — un promemoria che questo tipo di bug si trova leggendo il codice riga per riga, non con un pattern di ricerca generico. | `backend/app/models.py` | 5 | 5 | 1 | 50 |
 
 ### 4.2 Bug funzionali
 
@@ -150,6 +151,9 @@ tracciabilità dell'audit completo.
 | B0 | **[FATTO — trovato e corretto in questa sessione, non nell'audit iniziale]** Nessuna delle ~20 funzioni `generate_*` scriveva il blocco `FoamFile {...}` in testa ai dict generati (`controlDict`, `blockMeshDict`, `0/U`, `0/p`, ...). Non è un dettaglio cosmetico: la guida ufficiale OpenFOAM ("Basic input/output file format") lo elenca come obbligatorio per ogni file letto o scritto da OpenFOAM, e `IOobject::readHeader` nel codice sorgente lo pretende come primo token del file — senza, `blockMesh`/`checkMesh`/il solver rifiutano il file con un `FatalIOError`. Verificato con `grep -in "foamfile"` su tutto `templates_generator.py`: zero occorrenze, nessun meccanismo alternativo che lo aggiunga altrove (nessun template Jinja nonostante `jinja2` sia una dipendenza dichiarata - anch'essa mai importata, dipendenza morta). **Non ho potuto testare contro un OpenFOAM reale in questo ambiente** (nessun binario disponibile, rete sandboxata) — la correzione è basata sulla documentazione ufficiale, non su un run verificato. Verificala con un `docker compose up` reale prima di fidartene ciecamente, ma la evidenza è solida. | `backend/app/templates_generator.py` | 5 | 5 | 2 | 40 |
 | B1 | **[FATTO]** `list_cases` ordinava con `sorted(cases_root.iterdir(), reverse=True)` — cioè per nome cartella (UUID esadecimale casuale), non per data di creazione. La Dashboard mostrava i casi in un ordine sostanzialmente casuale nonostante l'intento fosse "più recenti prima". | `backend/app/routers/cases.py` | 4 | 2 | 1 | 24 |
 | B2 | TOCTOU su `create_case`: `count_cases()` e la creazione della cartella non sono atomiche. Due richieste concorrenti quando si è a un caso dal limite possono superare `max_cases`. Impatto basso per un'app mono-utente, ma è un bug reale. | `backend/app/routers/cases.py` | 1 | 1 | 3 | 0.7 |
+| M3 | **[FATTO]** Nessuna validazione che i nomi delle boundary condition corrispondano a patch mesh realmente esistenti (Bug #3 di `MESHING_FIXES.md`, collegato all'issue GitHub #2 "meshing fail"). Un utente poteva definire una BC su un patch inesistente, la config veniva accettata, il meshing "completava con successo", e il solver falliva molto più tardi con un errore criptico ("cannot find patch..."). Un modulo di test (`test_boundary_validation.py`) esisteva già e **falliva** perché il validatore non era mai stato scritto in `models.py`. | `backend/app/models.py` | 4 | 2 | 2 | 12 |
+| M2 | **[FATTO]** `checkMesh` può completare con exit 0 su una mesh comunque inutilizzabile (0 celle perché la geometria non interseca il dominio, celle invertite, skewness estrema) — Bug #2 di `MESHING_FIXES.md`. Un modulo (`mesh_validation.py`) con test propri esisteva già ma non era collegato a nessun punto della pipeline: dead code funzionalmente identico al pattern D4 (`ProjectWorkspace` orfano). | `worker/mesh_validation.py`, `worker/tasks.py` | 3 | 2 | 2 | 10 |
+| M7 | **[FATTO]** Race condition in `_generate_mesh`: due job di mesh concorrenti sullo stesso caso potevano correre insieme, uno cancella `case_dir/0/*` mentre l'altro ci scrive ancora — Bug #7 di `MESHING_FIXES.md`. Un modulo di locking (`file_locking.py`) esisteva già, testato, ma mai collegato. | `worker/tasks.py` | 2 | 2 | 1 | 8 |
 | B3 | Il viewer 3D (`viz/trame_app.py`) tiene `plotter`, `_mesh`, `state` come variabili **globali di modulo** — un solo processo trame serve un solo "viewer" condiviso. Due tab browser aperte sullo stesso viewer condividono `case_id`/`time_index`: cambiare caso in una tab lo cambia anche nell'altra. Comportamento a singolo utente per design, ma non documentato come limite noto. | `viz/trame_app.py` | 2 | 1 | 3 | 3 |
 
 
@@ -188,8 +192,11 @@ tracciabilità dell'audit completo.
 | # | Problema | File | Impatto | Rischio | Sforzo | Priorità |
 |---|----------|------|:-:|:-:|:-:|:-:|
 | T1 | **[FATTO]** Zero test di regressione sulla validazione dei boundary condition (il bug S1 non sarebbe stato preso da nessun test esistente). Aggiunti 3 test mirati (Sezione 5). | `backend/tests/test_api.py` | 3 | 2 | 1 | 15 |
-| T2 | Copertura test quasi nulla sul worker (`worker/tasks.py`, 337 righe, zero test) — comprensibile perché richiede OpenFOAM reale per un test end-to-end, ma le funzioni pure (`parse_residuals`, `parse_check_mesh`, `clean_case`) sono testabili in isolamento senza Docker. | `worker/tasks.py` | 3 | 2 | 3 | 3.75 |
+| T2 | Copertura test quasi nulla sul worker (`worker/tasks.py`, 337 righe, zero test) — comprensibile perché richiede OpenFOAM reale per un test end-to-end, ma le funzioni pure (`parse_residuals`, `parse_check_mesh`, `clean_case`) sono testabili in isolamento senza Docker. **Aggiornamento:** `worker/` ora ha 33 test (`file_locking.py`, `mesh_validation.py`), ma non ancora su `parse_residuals`/`parse_check_mesh`/`clean_case` stessi — voce parzialmente chiusa, non completamente. | `worker/tasks.py` | 2 | 2 | 3 | 2.5 |
 | T3 | `tsconfig.json` ha `noUnusedLocals: false` e `noUnusedParameters: false` — disabilitati, probabilmente per evitare di rompere la build su codice esistente. Questo è in parte la causa strutturale di D4/P1/P2: niente segnala import o variabili morte finché non le cerchi a mano. | `frontend/tsconfig.json` | 2 | 1 | 3 | 3 |
+| T4 | **[FATTO]** La CI (`ci.yml`) eseguiva `pytest` solo su `backend/tests/` — `worker/tests/` (33 test, incluse le due voci M2/M7 sopra) non girava mai in CI, solo manualmente. Un contributor poteva rompere `file_locking.py`/`mesh_validation.py` senza che nessun check se ne accorgesse. Aggiunto un job `worker` dedicato in `ci.yml`. | `.github/workflows/ci.yml` | 3 | 2 | 1 | 15 |
+| T5 | **[FATTO]** `mesh_validation.py::format_mesh_report` — `f"{metrics.get('cells', 'N/A'):,}"`: lo spec di formattazione `:,` (migliaia) applicato al fallback stringa `"N/A"` solleva `ValueError` non appena una metrica manca dal report. 3 test (già scritti, mai passati) lo confermavano. | `worker/mesh_validation.py` | 3 | 1 | 1 | 12 |
+| T6 | **[FATTO]** Nessun test eseguiva mai `blockMesh`/`checkMesh` reali — ogni verifica su B0/write_U si fermava a "il parser di foamlib lo legge" o "inizia con FoamFile", mai un binario OpenFOAM vero. Aggiunto il job CI `openfoam-integration` (Sezione 5, riconciliazione). | `.github/workflows/ci.yml` | 4 | 3 | 2 | 21 |
 
 ### 4.7 Documentazione
 
@@ -332,6 +339,99 @@ originale perché non emerso durante la prima lettura:
 Verifica eseguita: `pytest tests -v` → **11/11 pass** (il nuovo test sul
 FoamFile header incluso).
 
+### Fase 2 — foamlib (0/U e 0/p convertiti)
+
+17. **Aggiunto `foamlib==1.8.1`** a `backend/requirements.txt`.
+18. **Creato `backend/app/foam_templates/`**, il package promesso per
+    spezzare `templates_generator.py` (A1). Struttura ad oggi:
+    `fields.py` (i campi convertiti a foamlib) e `solver_info.py`
+    (`STEADY_STATE_SOLVERS`/`BUOYANT_SOLVERS`/`COMPRESSIBLE_SOLVERS` e le
+    funzioni `is_buoyant`/`is_compressible`/`solver_algorithm`, estratte
+    da `templates_generator.py` per evitare un import circolare: questo
+    importa da `foam_templates`, quindi `foam_templates` non può
+    importare da questo).
+19. **`0/U` convertito**: `write_U()` sostituisce
+    `generate_U`/`boundary_field_U` (rimossi, non lasciati come codice
+    morto). Validato prima del cutover con un confronto semantico contro
+    la versione vecchia (dimensioni, internalField, tutti e 5 i tipi di
+    boundary condition), poi il vecchio codice è stato rimosso.
+20. **`0/p` convertito**: `write_p()` sostituisce
+    `generate_p`/`boundary_field_p` (rimossi). Copre entrambi i rami —
+    solver buoyant (scrive sia `0/p_rgh` sia `0/p` con boundary
+    `calculated`) e non-buoyant (solo `0/p`) — con lo stesso
+    comportamento del generatore f-string originale.
+21. Test in `backend/tests/test_foam_templates.py`: la copertura dei tipi
+    di boundary condition (per U e per p) è testata chiamando le funzioni
+    di mappatura pure (`_boundary_condition_U`/`_boundary_condition_p`)
+    direttamente, non attraverso un `CaseConfig` completo — da quando
+    esiste la validazione dei patch (M3), un `CaseConfig` con nomi patch
+    inventati verrebbe respinto a monte, quindi testare la funzione di
+    mappatura in isolamento è sia più semplice sia più corretto.
+
+Verifica eseguita: `pytest` in `backend/` → **37/37 pass**; `pytest` in
+`worker/` → **33/33 pass** (invariati, nessuna interazione con questi
+file); smoke test manuale di `generate_case_files` con un caso
+buoyant+snappyHexMesh completo → ogni file scritto inizia ancora con
+`FoamFile`, nessuna regressione introdotta dal refactor dei moduli
+solver.
+
+### Fase 2 — continua (0/g, 0/T, 0/alphat, 0/k, 0/omega convertiti)
+
+Convertiti tutti i campi rimasti in `0/` e `constant/g` — con questo,
+**tutti** i campi (contrapposti ai dict puri di `system/`) sono ora su
+foamlib, non più su f-string.
+
+22. **`constant/g` convertito**: `write_g()`. Caso particolare — `g` è un
+    `uniformDimensionedVectorField`, non un volField: niente
+    internalField/boundaryField, solo `dimensions`+`value` a livello di
+    file. `FoamFieldFile` non si applica; usato `FoamFile` generico con
+    `field["FoamFile", "class"] = "uniformDimensionedVectorField"` per
+    forzare la classe (foamlib non ha modo di dedurla da un dict senza
+    forma standard di campo).
+23. **`0/T` e `0/alphat` convertiti**: `write_T()`/`write_alphat()`
+    sostituiscono `generate_T`/`boundary_field_T`/`generate_alphat`
+    (rimossi).
+24. **`0/k` e `0/omega` convertiti**: `write_turbulence_fields()`
+    sostituisce `generate_turbulence_fields`/`boundary_field_scalar`
+    (rimossi).
+25. **Trovata un'altra falla della stessa classe di S1, convertendo
+    proprio questo campo**: `k_type`/`omega_type` finivano **crudi** nel
+    dict per i patch non-wall
+    (`boundary_field_scalar`: `f"type {bc.k_type};"`) — a differenza di
+    `U_type`/`p_type`/`T_type`, che passano sempre per un `elif`
+    esplicito (un valore sconosciuto cade in un ramo sicuro, il valore
+    stesso non finisce mai nel file), `k_type`/`omega_type` erano
+    interpolati direttamente. Stesso identico rischio di S1 (injection di
+    una direttiva OpenFOAM tramite un nome di tipo malevolo). **Corretto**
+    in `models.py`: aggiunto `pattern=r"^[a-zA-Z0-9_]+$"` a entrambi,
+    aggiunto un test di regressione
+    (`test_boundary_condition_k_omega_type_rejects_dict_injection`) sullo
+    stesso modello del test per S1.
+26. `templates_generator.py` è sceso da ~906 a **659 righe** (comprese le
+    righe vuote e i commenti) — i dict puri restano lì, tutti i campi
+    scalari/vettoriali sono usciti.
+
+Verifica eseguita: `pytest` in `backend/` → **48/48 pass** (37 + 11
+nuovi); `pytest` in `worker/` → **33/33 pass** (invariati). Smoke test
+manuale con 4 combinazioni solver/turbolenza/mesh diverse (`simpleFoam`
+laminare, `simpleFoam` con `kOmegaSST`, `buoyantSimpleFoam` con
+`kEpsilon`+snappyHexMesh, `rhoSimpleFoam` con `kOmegaSST`) → ogni file
+generato inizia con `FoamFile` in tutte e 4 le combinazioni.
+
+**Cosa resta di Fase 2**: solo i dict puri di `system/`/`constant/`
+restano sul vecchio percorso f-string (`generate_control_dict`,
+`generate_fv_schemes`, `generate_fv_solution`, `generate_block_mesh_dict`,
+`generate_snappy_hex_mesh_dict`, `generate_decompose_par_dict`,
+`generate_transport_properties`, `generate_thermophysical_properties`,
+`generate_turbulence_properties`) — sono i più complessi strutturalmente
+(specialmente `blockMeshDict`/`snappyHexMeshDict`, con liste di vertici,
+blocchi, controlli di raffinamento annidati), quindi anche i più costosi
+da convertire, ma anche i meno a rischio: non hanno lo stesso pattern di
+"stringa utente inserita cruda in un dict" che ha causato S1 e questa
+nuova falla - i loro parametri sono quasi tutti numerici o già passati
+per una validazione Pydantic con whitelist di valori. Il parsing dei log
+nel worker (`parse_residuals`, `parse_check_mesh`) non è stato toccato.
+
 **Non toccati in questa sessione, per scelta esplicita (richiedono una tua
 decisione, non solo lavoro tecnico):**
 - **D4** (`ProjectWorkspace`/`Viewport3D` orfani) — completarli è una
@@ -340,6 +440,106 @@ decisione, non solo lavoro tecnico):**
 - **D5** (licenza) — GPL-3.0 resta la scelta tecnicamente più coerente
   (vedi Sezione 6), ma è una decisione con conseguenze legali/di business
   che spetta a te, non a un'esecuzione automatica di roadmap.
+
+### Seconda riconciliazione: issue GitHub, 8 test falliti, moduli orfani
+
+Ri-analizzando la repository su tuo esplicito invito ("continua
+rianalizzando... per i cambiamenti, issue, azioni") ho trovato altri 5
+commit nuovi su GitHub (`ff1119e`…`98f2384`), non presenti nella mia copia
+locale. Ho riclonato di nuovo prima di continuare, stesso principio delle
+volte precedenti: non sovrascrivere lavoro fatto nel frattempo.
+
+**Trovato un issue GitHub aperto**, **#2 "meshing fail"**, aperto da te
+stesso il 10 settembre, ancora aperto: *"Meshing fails on initialization
+with lack of control in meshing generation and visualization. [...] No
+named selection support, No 3D viewer editor."* Insieme a `ff1119e` c'era
+anche `MESHING_FIXES.md` (909 righe), un'analisi indipendente di 7 bug
+legati a questo issue, con fix proposti e codice di esempio — chiaramente
+scritta da un altro strumento/sessione IA dopo aver visto il mio
+`ROADMAP.md` (lo cita per nome). Buona analisi, in parte solo abbozzata:
+due dei fix proposti (`mesh_validation.py`, `file_locking.py`) erano stati
+scritti come moduli standalone, con test propri, ma **mai collegati alla
+pipeline reale** — stesso pattern del `ProjectWorkspace` orfano (D4), non
+un caso isolato in questa codebase.
+
+**Eseguendo `pytest` sullo stato reale di GitHub, 8 test fallivano**, non
+solo mancanze teoriche:
+
+| Test | Causa | Fix |
+|---|---|---|
+| `test_rejects_undefined_patch_for_blockmesh` e altri 4 in `test_boundary_validation.py` | Bug #3 (MESHING_FIXES.md): nessun validatore che verifica che i nomi delle boundary condition corrispondano a patch mesh reali — la validazione era stata *testata* ma mai *scritta* in `models.py`. | Implementato `validate_boundary_patches_exist` su `CaseConfig`, esattamente come specificato nel documento. |
+| `test_format_valid_mesh_report`, `test_format_invalid_mesh_report`, `test_format_report_includes_metrics` in `test_mesh_validation.py` | `format_mesh_report()` in `mesh_validation.py` faceva `f"{metrics.get('cells', 'N/A'):,}"` — lo spec di formattazione `:,` (separatore delle migliaia) applicato alla stringa di fallback `"N/A"` solleva `ValueError: Cannot specify ',' with 's'` non appena una metrica manca. | Riscritta con un helper `fmt()` che formatta solo se il valore è davvero numerico. |
+
+Sistemando questi ho trovato **altri 2 bug** non ancora coperti da test
+falliti visibili (mascherati dai fallimenti sopra):
+
+1. Il nome patch derivato da un file STL con più punti nel nome (es.
+   `"geometry.v2.final.stl"` → patch `"geometry.v2.final"`, caso reale
+   testato da `test_stl_with_multiple_dots`) veniva rifiutato dal
+   whitelist di sicurezza S1 su `BoundaryCondition.name`
+   (`^[a-zA-Z0-9_]+$`, niente punti). **Allargato** a
+   `^[a-zA-Z0-9_.-]+$`: punto e trattino non abilitano l'injection che S1
+   doveva chiudere (non chiudono un blocco dict, non introducono
+   direttive OpenFOAM), restano esclusi solo i caratteri realmente
+   pericolosi.
+2. `test_lock_with_special_characters_in_case_id` in
+   `worker/tests/test_file_locking.py` controllava l'esistenza di un file
+   `test.lock` che il codice non scrive mai (`mesh_generation_lock` crea
+   sempre `.mesh_lock`, nome hardcoded) — bug nel test, non
+   nell'implementazione. Corretto il nome nel test.
+
+**Poi ho effettivamente collegato i due moduli orfani**, seguendo
+l'integrazione che MESHING_FIXES.md stesso descrive:
+
+- **`mesh_validation.py` era nel posto sbagliato**: viveva in
+  `backend/app/`, ma la generazione dict è nel processo API mentre
+  l'esecuzione (e quindi il posto naturale per validare l'output di
+  `checkMesh`) è nel **worker** — due container Docker separati, senza
+  filesystem/Python path condiviso (`worker/Dockerfile` copia solo
+  `tasks.py`/`mesh_export.py`, non `backend/app/`). Il modulo non ha
+  nessuna dipendenza da FastAPI/Pydantic, quindi l'ho **spostato in
+  `worker/mesh_validation.py`** (e il suo test in
+  `worker/tests/test_mesh_validation.py`) invece di inventare un modo per
+  condividerlo tra container.
+- In `worker/tasks.py::_generate_mesh`, dopo `parse_check_mesh()`, ora
+  chiama `validate_mesh_quality()` sul report e scrive `mesh_valid`,
+  `quality_issues`, `quality_warnings` dentro `mesh_report.json`. Se la
+  mesh non è valida (0 celle, skewness estrema, ...), la funzione si
+  ferma lì — non ha senso lanciare `foamToVTK`/il preview su una mesh che
+  il solver rifiuterebbe comunque, e prima ci si arrivava sempre.
+- `_generate_mesh` ora gira interamente dentro
+  `mesh_generation_lock(case_dir, ...)` (rinominata la logica originale in
+  `_generate_mesh_locked`, chiamata da dentro il lock). Chiude il bug #7
+  di MESHING_FIXES.md: due job di mesh concorrenti sullo stesso caso non
+  possono più correre e corrompere la cartella a vicenda.
+- Aggiornato `worker/Dockerfile` per copiare anche `mesh_validation.py` e
+  `file_locking.py` nell'immagine (prima mancavano dalla riga `COPY`,
+  quindi anche se li avessi importati il container avrebbe fallito
+  all'avvio con `ModuleNotFoundError`).
+
+**Trovato anche**: la CI (`ci.yml`) eseguiva `pytest` solo su
+`backend/tests/` — **`worker/tests/` (33 test) non girava mai in CI**,
+solo a mano. Aggiunto un job `worker` dedicato.
+
+**Aggiunto un job CI nuovo, `openfoam-integration`**, che chiude il
+"non verificato contro OpenFOAM reale" ripetuto per tutto questo
+documento (B0, write_U): usa
+[`gerlero/setup-openfoam`](https://github.com/gerlero/setup-openfoam)
+(stesso autore di `foamlib`) per installare OpenFOAM 2406 vero nel runner
+GitHub Actions, genera un caso completo, e lancia `blockMesh`/`checkMesh`
+per davvero contro i file prodotti da questa codebase — più un controllo
+sintattico di `snappyHexMeshDict` via `foamDictionary` (senza geometria
+reale, solo per verificare che il dict sia parsabile). D'ora in poi ogni
+push/PR lo verifica automaticamente, non serve più fidarsi della sola
+documentazione OpenFOAM o del parser di foamlib.
+
+Verifica eseguita: `pytest` in `backend/` → **31/31 pass**; `pytest` in
+`worker/` → **33/33 pass** (totale 64, includendo i moduli appena
+collegati); YAML della CI validato con `python3 -c "import yaml; ..."`.
+**Non verificato**: il job `openfoam-integration` stesso — non ho un
+runner GitHub Actions qui per eseguirlo, solo la sintassi YAML e la
+logica Python che genera i case sono state controllate in locale. La
+prima esecuzione reale sarà al prossimo push.
 
 ---
 
@@ -400,27 +600,41 @@ e destino di `ProjectWorkspace`: in attesa di una tua decisione.*
 ### Fase 2 — Adozione di `foamlib` (core refactor, 1–2 settimane)
 Il pezzo più grosso e con il rapporto valore/rischio migliore.
 
-1. Aggiungere `foamlib` a `backend/requirements.txt` e `worker/requirements.txt`.
+1. ~~Aggiungere `foamlib` a `backend/requirements.txt`~~ **Fatto**
+   (`foamlib==1.8.1`). `worker/requirements.txt` non ancora — il worker
+   non genera file, li esegue soltanto (vedi `ARCHITECTURE.md`); serve
+   solo quando si converte il punto 2 qui sotto (log parsing).
 2. Nel worker, sostituire la lettura/scrittura manuale dei log
    (`parse_residuals`, `parse_check_mesh`) con l'accesso ai campi via
    `FoamCase`/`FoamFieldFile` e con il monitoraggio di progresso nativo di
    `foamlib` (elimina la classe di bug vista in A2 — il regex di skewness
-   sbagliato non sarebbe potuto succedere con un parser vero).
+   sbagliato non sarebbe potuto succedere con un parser vero). **Non
+   ancora fatto.**
 3. In `templates_generator.py`, sostituire progressivamente le funzioni
    `generate_*` con la scrittura via `FoamFile` (dict-like, gestisce da
    solo l'escaping strutturale — chiude *strutturalmente* la classe di bug
-   di S1, non solo con una whitelist a monte).
-4. Fare il refactor **un file OpenFOAM alla volta** (partire da
-   `0/U`/`0/p`, i più semplici), con il test di regressione che confronta
-   l'output character-per-character col generatore attuale prima di
-   sostituirlo, così ogni step è verificabile in isolamento.
-5. Split di `templates_generator.py` in un package
-   (`backend/app/foam_templates/{mesh,physics,boundaries,control}.py`) man
-   mano che si converte, invece che in un colpo solo (A1).
+   di S1, non solo con una whitelist a monte). **Tutti i campi fatti**
+   (`0/U`, `0/p`, `0/p_rgh`, `0/T`, `0/alphat`, `0/k`, `0/omega`,
+   `constant/g`). Restano solo i dict puri: `controlDict`, `fvSchemes`,
+   `fvSolution`, `blockMeshDict`, `snappyHexMeshDict`,
+   `decomposeParDict`, `transportProperties`,
+   `thermophysicalProperties`, `turbulenceProperties`.
+4. ~~Fare il refactor un file alla volta, con test di regressione prima
+   di sostituirlo~~ **Fatto per tutti i campi**: creato
+   `backend/app/foam_templates/fields.py` con una funzione `write_*` per
+   ciascuno, ognuna validata prima del cutover, poi il vecchio codice
+   f-string **rimosso** (non lasciato come codice morto).
+   `templates_generator.py` sceso da ~906 a 659 righe.
+5. Split di `templates_generator.py` in un package — **in corso**:
+   `backend/app/foam_templates/` esiste con `fields.py` (tutti i campi) e
+   `solver_info.py` (classificazione solver, estratta per evitare un
+   import circolare). Manca ancora un modulo per i dict puri
+   (mesh/controllo/proprietà fisiche).
 
 **Uscita:** `templates_generator.py` sotto ~150 righe (o rimosso), tutti i
-test esistenti + quelli di regressione character-diff verdi, nessuna regex
-per il parsing dei log rimasta in `worker/tasks.py`.
+test esistenti verdi, nessuna regex per il parsing dei log rimasta in
+`worker/tasks.py`. → *In corso: tutti gli 8 campi convertiti (48/48 test
+backend verdi), restano i 9 dict puri e tutto il punto 2 (worker).*
 
 ### Fase 3 — Feature parity ispirata a FoamPilot (1–2 settimane)
 - Calcolatore **y+** e suggerimento raffinamento/dominio basato su
@@ -486,58 +700,54 @@ NVIDIA richiesto in produzione).
 
 Cosa ho controllato concretamente su questa consegna, con esito:
 
-- [x] `pytest tests -v` nella cartella `backend` → **11/11 pass** (3 test
-      preesistenti + 8 nuovi tra Fase 0, Fase 1 e la correzione B0).
-- [x] **Test dedicato per B0** (`test_generated_files_have_foam_file_header`):
-      genera un caso completo (solver buoyant + snappyHexMesh, per coprire
-      tutti i rami di `generate_case_files`) e verifica che ogni dict
-      OpenFOAM prodotto inizi col blocco `FoamFile`, e che i due file
-      interni (`case.json`, `config.json`) non ce l'abbiano.
-- [x] `jinja2` disinstallata (`pip uninstall`) e suite rieseguita per
-      confermare che non fosse una dipendenza nascosta di qualcos'altro →
-      **11/11 pass** anche senza.
-- [x] `npm install` con `package.json` ripulito → lockfile rigenerato senza
-      errori.
-- [x] `npm run build` (`tsc && vite build`) → build completata, **zero
-      errori TypeScript**, nessuna rottura dovuta alla rimozione delle
-      dipendenze morte.
-- [x] `npm audit` eseguito e letto per intero → 4 vulnerabilità moderate
-      residue, tutte documentate in P3 con motivo per cui non sono state
-      forzate automaticamente.
-- [x] Verificato con `grep` che nessun import residuo puntasse alle
-      dipendenze rimosse (`@tanstack/react-router`, `recharts`) prima di
-      toglierle da `package.json`.
-- [x] Verificato che `update_last_job` non fosse chiamata da nessuna parte
-      prima di rimuoverla.
-- [x] Diff dei due file duplicati (`backend/test/` vs `backend/tests/`,
-      `.github/workflow/` vs `.github/workflows/`) per confermare che
-      fossero davvero copie morte e non versioni divergenti da conciliare.
-- [x] **Riclonato da GitHub invece di ripartire dall'archivio locale**,
-      per non perdere né sovrascrivere il lavoro che hai fatto tu nel
-      frattempo (commit `72f840a`, `0f723ea`). Confrontati i diff prima di
-      procedere, non assunto che il mio stato locale fosse ancora quello
-      giusto.
-- [x] Cartelle `node_modules/`, `dist/`, `__pycache__/`, `.pytest_cache/`
-      rimosse prima dell'archiviazione (già in `.gitignore`, ma non devono
-      finire nello zip).
-- [ ] **Non verificato — la più importante di questa lista**: B0 (header
-      FoamFile mancante) è basato sulla documentazione ufficiale OpenFOAM,
-      non su un run reale contro un binario OpenFOAM (non disponibile in
-      questo ambiente sandboxato). Prima di tutto il resto, verifica che
-      un `docker compose up` seguito da un caso reale (upload → mesh →
-      run) produca file che `blockMesh` accetta di leggere.
-- [ ] **Non verificato**: il nuovo `tasks.run_terminal_command` non è
-      testabile end-to-end in questo ambiente (richiede un worker Celery +
-      OpenFOAM reali). I test aggiunti coprono solo la parte verificabile
-      senza infrastruttura (guardie 403/400/404 nel router).
-- [ ] **Non verificato** (richiede infrastruttura che non ho a
-      disposizione in questo ambiente): build Docker reale di
-      `worker/Dockerfile` (scarica ~2 GB di pacchetti OpenFOAM da rete
-      esterna), esecuzione end-to-end di un caso reale (mesh + solve),
-      comportamento del viewer trame con dati reali, upload reale vicino
-      al limite di dimensione. Prima di considerare i fix di questa
-      sessione "in produzione", esegui almeno un ciclo completo
-      wizard → mesh → run → risultati con `docker compose up`.
+- [x] `pytest` in `backend/` → **48/48 pass** (31 dopo la riconciliazione
+      + 6 per `write_p`/estrazione `solver_info` + 11 per
+      `write_g`/`write_T`/`write_alphat`/`write_turbulence_fields` e il
+      fix di sicurezza S6).
+- [x] `pytest` in `worker/` → **33/33 pass** (prima non esisteva nessuna
+      suite worker eseguibile in isolamento; ora esiste e passa).
+- [x] I file zip precedenti erano diventati obsoleti: **riclonato da
+      GitHub due volte in questa sessione** (non solo una), l'ultima
+      dopo aver trovato 5 commit nuovi che includevano `MESHING_FIXES.md`
+      e i moduli `mesh_validation.py`/`file_locking.py`. Confrontato ogni
+      volta il diff prima di procedere, non assunto che il mio stato
+      locale fosse ancora quello giusto.
+- [x] Eseguita l'intera suite **prima** di ogni fix per confermare quali
+      test fallissero davvero e perché (8 fallimenti reali, non
+      supposizioni), non solo dopo per dire "ora passa".
+- [x] `npm run build` → build completata, zero errori TypeScript.
+- [x] YAML di `.github/workflows/ci.yml` validato con
+      `python3 -c "import yaml; yaml.safe_load(...)"` dopo ogni modifica.
+- [x] Verificato con `grep` che `mesh_validation.py`/`file_locking.py`
+      non fossero importati da nessuna parte prima di spostare/collegare
+      il primo — non stavo rompendo un uso esistente che non avevo visto.
+- [x] Verificato che il nuovo pattern `^[a-zA-Z0-9_.-]+$` su
+      `BoundaryCondition.name` non riaprisse la falla S1: il payload di
+      test già esistente (`inlet\n}\n#codeStream\n{\n`) contiene solo
+      caratteri ancora esclusi dal pattern, il test
+      `test_boundary_condition_name_rejects_dict_injection` resta verde.
+- [ ] **Non verificato — resta la voce più importante di tutto questo
+      documento**: né B0 né `write_U` (Fase 2) né i dict generati in
+      generale sono mai stati letti da un `blockMesh`/`checkMesh` reale
+      da *me* — solo dal parser di foamlib, che non è lo stesso codice.
+      Ho aggiunto il job CI `openfoam-integration` apposta per chiudere
+      questo buco in modo permanente e automatico, ma **non ho un runner
+      GitHub Actions in questo ambiente per eseguirlo**: la sua prima
+      esecuzione reale sarà al prossimo push. Se fallisce, è la cosa da
+      guardare per prima.
+- [ ] **Non verificato**: `mesh_generation_lock` e `validate_mesh_quality`
+      ora sono collegati in `_generate_mesh`, ma non ho potuto eseguire
+      un job di mesh reale (serve Celery + Redis + OpenFOAM) per
+      confermare che l'integrazione funzioni end-to-end, solo che i due
+      moduli superano i loro test unitari in isolamento e che
+      `tasks.py` continua a fare parsing sintattico corretto (AST).
+- [ ] **Non verificato** (richiede infrastruttura Docker che non ho in
+      questo ambiente): build reale di `worker/Dockerfile` con le due
+      righe `COPY` aggiornate, upload reale vicino al limite di
+      dimensione, comportamento del viewer trame con dati reali. Prima di
+      considerare tutti i fix di questa sessione "in produzione", esegui
+      un ciclo completo wizard → mesh → run → risultati con
+      `docker compose up`.
 
 ---
 
@@ -545,22 +755,34 @@ Cosa ho controllato concretamente su questa consegna, con esito:
 
 Se vuoi partire subito, in ordine di rapporto valore/sforzo:
 
-1. **Verifica B0 per prima cosa**: `docker compose up`, crea un caso,
-   genera la mesh, controlla che `blockMesh` non fallisca più leggendo
-   `system/blockMeshDict`. Se prima falliva silenziosamente (job segnato
-   "failed" senza una causa ovvia in UI), questo potrebbe spiegare mesi di
-   run falliti in un colpo solo — o potrebbe darsi che tu l'avessi già
-   notato e risolto in un modo che non ho visto; in tal caso dimmelo, mi
-   interessa capire cosa mi è sfuggito.
-2. **Decidi le due voci aperte di Fase 1**: licenza (D5) e destino di
-   `ProjectWorkspace`/`Viewport3D` (D4) — sono le uniche rimaste della
-   Fase 1, il resto è già fatto.
-3. **Fase 2** (foamlib) è l'investimento con il ritorno più alto: parti da
-   un solo file (`0/U`) come proof of concept prima di convertire tutto
-   `templates_generator.py`.
-4. Le Fasi 3–5 sono feature/manutenzione, non urgenti — pianificale quando
-   Fase 2 è stabile, non in parallelo.
-5. **Processo:** se applichi le patch di questo audit a mano invece di
-   sostituire l'intero albero dei file, ricontrolla sempre le
-   cancellazioni (vedi D1/D2 in Sezione 5, ricomparse per questo motivo) —
-   copiare solo i file cambiati non porta con sé i file rimossi.
+1. **Fai il push e guarda il job `openfoam-integration`** — è la prima
+   volta che un `blockMesh` vero legge i file generati da questa
+   codebase in modo automatico e ripetibile. Se rosso, è la priorità
+   assoluta su tutto il resto di questo documento.
+2. **Verifica in locale** con `docker compose up` le parti che non ho
+   potuto testare da qui (checklist sopra): upload grande, un job di
+   mesh reale con lock/validazione attivi, un caso `snappyHexMesh` con
+   geometria vera.
+3. **Chiudi il loop sull'issue #2** ("meshing fail") — commenta o chiudi
+   l'issue una volta che `openfoam-integration` è verde e hai confermato
+   in locale che il meshing completa; se il mesh_report ora mostra
+   `mesh_valid: false` con un messaggio chiaro invece di un fallimento
+   criptico più tardi, è la conferma che serviva.
+4. **Decidi le due voci aperte di Fase 1**: licenza (D5) e destino di
+   `ProjectWorkspace`/`Viewport3D` (D4, citato anche in MESHING_FIXES.md
+   come Bug #4 con due opzioni di fix, quick e completa).
+5. **Continua Fase 2** (foamlib): tutti i campi (`0/*`, `constant/g`) sono
+   convertiti e testati, restano solo i 9 dict puri di
+   `system/`/`constant/` — stesso schema (converti, testa, sostituisci,
+   rimuovi il vecchio).
+6. Le Fasi 3–5 sono feature/manutenzione, non urgenti — named selection
+   (Bug #5 di MESHING_FIXES.md) e il 3D viewer completo sono lavoro
+   sostanziale, non "fix": pianificale quando il resto è stabile.
+7. **Processo, di nuovo:** in questa sessione ho trovato *due volte* file
+   morti ricomparsi e *una volta* moduli scritti-ma-mai-collegati. Se il
+   flusso di lavoro prevede più strumenti/sessioni IA in parallelo su
+   questo repo, vale la pena, dopo ogni sessione, controllare non solo
+   "i test passano" ma "i test nuovi sono collegati a qualcosa che gira
+   davvero" — `grep -rn nome_modulo` prima di considerare una feature
+   fatta è un controllo da 10 secondi che avrebbe preso sia
+   `mesh_validation.py` sia `file_locking.py` sia `ProjectWorkspace.tsx`.

@@ -189,7 +189,28 @@ def _generate_mesh(self, job_id: str, case_dir: Path, config: dict) -> dict:
     """Meshing + checkMesh + preview WebGL: fattorizzato fuori da
     run_openfoam_case perche' serve anche al job "solo mesh" (l'utente
     vuole vedere/validare la mesh prima di lanciare una simulazione
-    intera, che puo' durare ore)."""
+    intera, che puo' durare ore).
+
+    ponytail (Bug #7, MESHING_FIXES.md): l'intera funzione gira dentro
+    mesh_generation_lock - senza, due job di mesh concorrenti sullo
+    stesso caso potevano correre: uno cancella case_dir/0/* mentre
+    l'altro ci sta ancora scrivendo, con un FileNotFoundError a meta'
+    esecuzione e la cartella del caso lasciata in uno stato inconsistente
+    che richiedeva pulizia manuale. mesh_generation_lock (file_locking.py)
+    era gia' scritto e testato ma mai collegato qui."""
+    from file_locking import FileLockError, mesh_generation_lock
+
+    try:
+        with mesh_generation_lock(case_dir, case_id=case_dir.name):
+            return _generate_mesh_locked(self, job_id, case_dir, config)
+    except FileLockError as exc:
+        # stesso pattern di errore delle altre eccezioni gestite da
+        # run_step/celery: il messaggio arriva cosi' com'e' fino alla UI,
+        # deve essere comprensibile a un utente, non solo a un log.
+        raise RuntimeError(str(exc)) from exc
+
+
+def _generate_mesh_locked(self, job_id: str, case_dir: Path, config: dict) -> dict:
     mesh = config.get("mesh", {})
     run_settings = config.get("run", {})
 
@@ -218,9 +239,30 @@ def _generate_mesh(self, job_id: str, case_dir: Path, config: dict) -> dict:
     mesh_report["mesh_type"] = mesh_type
     mesh_report["generated_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
+    # ponytail (Bug #2, MESHING_FIXES.md): checkMesh puo' completare
+    # "con successo" (exit 0) su una mesh comunque inutilizzabile - 0
+    # celle perche' la geometria non interseca il dominio, celle
+    # invertite, skewness estrema. Prima questi casi arrivavano al
+    # solver, che falliva molto piu' tardi con un errore criptico.
+    # validate_mesh_quality era gia' scritta e testata ma mai chiamata.
+    from mesh_validation import validate_mesh_quality
+
+    quality = validate_mesh_quality(mesh_report, case_dir.name)
+    mesh_report["mesh_valid"] = quality["is_valid"]
+    mesh_report["quality_issues"] = quality["issues"]
+    mesh_report["quality_warnings"] = quality["warnings"]
+
     post_dir = case_dir / "postProcessing"
     post_dir.mkdir(exist_ok=True)
     (post_dir / "mesh_report.json").write_text(json.dumps(mesh_report, indent=2))
+
+    if not quality["is_valid"]:
+        # mesh_report.json resta scritto (la UI deve poter mostrare
+        # perche' e' fallita), ma non ha senso continuare con
+        # foamToVTK/preview su una mesh che il solver rifiuterebbe
+        # comunque - risparmia tempo e non produce un preview fuorviante
+        # di una mesh a 0 celle.
+        return mesh_report
 
     # foamToVTK sulla sola mesh (nessun campo risolto ancora, ma la
     # geometria si', e' quello che ci serve sia per il viewer trame

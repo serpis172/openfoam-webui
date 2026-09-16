@@ -201,7 +201,12 @@ class TestLockRobustness:
     
     def test_lock_with_special_characters_in_case_id(self, tmp_path):
         """Lock should handle special characters in case ID (logging only)."""
-        lock_file = tmp_path / "test.lock"
+        # ponytail: mesh_generation_lock crea sempre "case_dir/.mesh_lock"
+        # (nome hardcoded, non parametrizzato) - questo test controllava
+        # "test.lock", un nome che il codice non scrive mai. Bug nel test,
+        # non nell'implementazione: il lock funzionava, l'assert guardava
+        # il file sbagliato.
+        lock_file = tmp_path / ".mesh_lock"
         
         # Special chars in case_id (for logging)
         with mesh_generation_lock(tmp_path, case_id="case/with-special_chars.123"):

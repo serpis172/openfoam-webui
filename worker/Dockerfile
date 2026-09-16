@@ -36,7 +36,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip3 install --no-cache-dir -r requirements.txt
 
-COPY tasks.py mesh_export.py .
+COPY tasks.py mesh_export.py mesh_validation.py file_locking.py .
 
 # ponytail: prima girava come utente "foam" non-root, ma il container
 # api (backend/Dockerfile) gira come root di default e crea le cartelle
