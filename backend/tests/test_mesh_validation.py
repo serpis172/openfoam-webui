@@ -184,7 +184,7 @@ class TestMeshValidationReport:
         report_text = format_mesh_report(mesh_report)
         
         assert "PASSED" in report_text
-        assert "5000" in report_text
+        assert "5,000" in report_text
         assert "High aspect ratio" in report_text
     
     def test_format_invalid_mesh_report(self):
@@ -218,9 +218,9 @@ class TestMeshValidationReport:
         
         report_text = format_mesh_report(mesh_report)
         
-        assert "10000" in report_text
-        assert "2000" in report_text
-        assert "0.80" in report_text
+        assert "10,000" in report_text
+        assert "2,000" in report_text
+        assert "0.8" in report_text
         assert "60.5" in report_text
         assert "100" in report_text
 

@@ -1,5 +1,12 @@
 # Roadmap — openfoam-webui
 
+> 🇮🇹 Diario tecnico interno, solo in italiano. Per la documentazione
+> utente (setup, uso, configurazione) vedi **[docs/it/README.md](docs/it/README.md)**.
+>
+> 🇬🇧 Internal engineering log, Italian only. For user-facing
+> documentation (setup, usage, configuration) see
+> **[docs/en/README.md](docs/en/README.md)**.
+
 Audit tecnico, piano di lavoro a fasi e checklist di verifica per la repository
 `openfoam-webui`. Prodotto analizzando l'intero codice sorgente (non solo i
 nomi dei file) e confrontandolo con quattro progetti di riferimento nello

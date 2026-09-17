@@ -1,5 +1,13 @@
 # Meshing Failure Fixes — Issue: "meshing fail"
 
+> 🇬🇧 Internal engineering log, English only. For user-facing
+> documentation (setup, usage, configuration) see
+> **[docs/en/README.md](docs/en/README.md)**.
+>
+> 🇮🇹 Diario tecnico interno, solo in inglese. Per la documentazione
+> utente (setup, uso, configurazione) vedi
+> **[docs/it/README.md](docs/it/README.md)**.
+
 ## Overview
 
 This document provides detailed fix suggestions for 7 critical/high-priority bugs affecting mesh generation, visualization, and control. Each fix includes:

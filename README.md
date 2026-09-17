@@ -1,98 +1,29 @@
 # OpenFOAM Web UI
 
-Interfaccia web completa per usare OpenFOAM senza scrivere comandi.
+Interfaccia web per usare OpenFOAM senza terminale · A web interface for
+running OpenFOAM without touching a terminal.
 
-## Funzionalità
+**📖 Full documentation / Documentazione completa:**
+[🇬🇧 English](docs/en/README.md) · [🇮🇹 Italiano](docs/it/README.md)
 
-- Creazione casi da wizard.
-- Upload geometrie STL/OBJ.
-- Configurazione fisica da GUI.
-- Configurazione boundary conditions da GUI.
-- Generazione automatica file OpenFOAM.
-- Mesh con blockMesh o snappyHexMesh.
-- Esecuzione parallela con mpirun.
-- Monitoraggio stato job.
-- Grafici residui.
-- Validazione sintattica.
-- Editor file OpenFOAM nel browser.
-- Visualizzazione 3D con trame/PyVista.
-- Download risultati.
-- Report simulazione.
-- Backup e cleanup.
-- Test automatici.
-- CI GitHub Actions.
+**🏗️ Architecture / Architettura:**
+[🇬🇧 English](docs/en/ARCHITECTURE.md) · [🇮🇹 Italiano](docs/it/ARCHITECTURE.md)
 
-## Requisiti
-
-- Docker
-- Docker Compose plugin
-- Node.js LTS
-- npm
-
-## Installazione
+## Quick start
 
 ```bash
 cp .env.example .env
-nano .env
+nano .env   # set REDIS_PASSWORD, API_KEY
 
 bash scripts/setup.sh
 ```
 
-Apri:
+Then open <http://localhost:8000>. See the full docs above for
+configuration, usage, testing, security notes, and troubleshooting.
 
-```text
-http://localhost:8000
-```
+## Other technical documents (internal engineering logs, single-language each)
 
-## Viewer 3D
-
-Il servizio `viz` parte in automatico con `docker compose up`, non serve
-nessun profilo opzionale. Il viewer è integrato nella pagina Risultati
-di ogni progetto, e raggiungibile anche direttamente su
-`http://localhost:8081`.
-
-## Comandi utili
-
-```bash
-docker compose up -d
-docker compose down
-docker compose logs -f
-make frontend
-make backup
-bash scripts/cleanup.sh
-```
-
-## Test
-
-```bash
-cd backend
-pytest tests -v
-```
-
-## Sicurezza
-
-- Terminale disabilitato di default (ora eseguibile davvero via worker se
-  abilitato con `ENABLE_TERMINAL=true` - prima era uno stub inerte).
-- Upload limitati.
-- Path traversal bloccato.
-- Redis con password.
-- Job con timeout.
-- Annullamento job con kill del process group.
-- Validazione file OpenFOAM.
-- Errori API senza output sensibili.
-- Nomi/tipi di boundary condition validati con whitelist prima di finire nei
-  dict OpenFOAM generati (`0/U`, `0/p`, ...).
-
-**Limite noto:** la API key (`X-API-Key`) è pensata come lucchetto per un
-deploy locale/mono-utente, non come autenticazione vera. È iniettata a
-build-time nel bundle frontend (`VITE_API_KEY`), quindi visibile a chiunque
-apra i devtools del browser. Va bene per `localhost` o una rete fidata; se
-il servizio viene esposto oltre quello, serve un meccanismo di sessione
-lato server prima, non solo questa chiave. Vedi `ROADMAP.md`, voce S4.
-
-## Note
-
-Questo progetto non usa reverse proxy.
-
-- Frontend e API sono serviti da FastAPI sulla porta 8000.
-- Il viewer 3D gira sulla porta 8081.
+- [`ROADMAP.md`](ROADMAP.md) — design decisions, security audits, foamlib
+  migration roadmap. Italian only.
+- [`MESHING_FIXES.md`](MESHING_FIXES.md) — meshing bugs fixed, root
+  causes. English only.

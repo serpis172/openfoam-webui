@@ -142,11 +142,17 @@ def format_mesh_report(mesh_report: dict) -> str:
         for warning in mesh_report["warnings"]:
             lines.append(f"  • {warning}")
     
+    def _fmt_count(value) -> str:
+        """Thousands-separated for real numbers; 'N/A' (a str) has no
+        ',' formatting to apply, so it must not go through the same
+        f-string spec as the numeric case."""
+        return f"{value:,}" if isinstance(value, (int, float)) else str(value)
+
     metrics = mesh_report.get("metrics", {})
     if metrics:
         lines.append("\nMetrics:")
-        lines.append(f"  Cells:        {metrics.get('cells', 'N/A'):,}")
-        lines.append(f"  Points:       {metrics.get('points', 'N/A'):,}")
+        lines.append(f"  Cells:        {_fmt_count(metrics.get('cells', 'N/A'))}")
+        lines.append(f"  Points:       {_fmt_count(metrics.get('points', 'N/A'))}")
         lines.append(f"  Skewness:     {metrics.get('max_skewness', 'N/A')}")
         lines.append(f"  Non-Ortho:    {metrics.get('max_non_orthogonality', 'N/A')}°")
         lines.append(f"  Aspect Ratio: {metrics.get('max_aspect_ratio', 'N/A')}")
