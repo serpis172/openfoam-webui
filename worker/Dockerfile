@@ -30,6 +30,18 @@ RUN curl -fsSL https://dl.openfoam.com/add-debian-repo.sh | bash \
 ENV OPENFOAM_BASHRC=/opt/openfoam2406/etc/bashrc
 ENV PATH=/opt/openfoam2406/platforms/linux64GccDPInt32Opt/bin:$PATH
 
+# I pacchetti .deb ESI installano (di norma) in /usr/lib/openfoam/openfoam2406;
+# il percorso /opt/openfoam2406 usato da OPENFOAM_BASHRC potrebbe non
+# esistere: lo si collega qui se manca e si verifica in fase di BUILD che
+# blockMesh parta davvero. Meglio un build che fallisce con un messaggio
+# chiaro che un worker che parte "sano" e poi fallisce ogni job di
+# meshing con "command not found" (codice 127).
+RUN if [ ! -e /opt/openfoam2406/etc/bashrc ] && [ -d /usr/lib/openfoam/openfoam2406 ]; then \
+        ln -s /usr/lib/openfoam/openfoam2406 /opt/openfoam2406; \
+    fi \
+    && bash -c 'source "$OPENFOAM_BASHRC" && blockMesh -help >/dev/null' \
+    || (echo "ERRORE: OpenFOAM non utilizzabile via $OPENFOAM_BASHRC" >&2; exit 1)
+
 WORKDIR /app
 
 # Installa dipendenze Python

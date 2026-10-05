@@ -35,13 +35,39 @@ def redis_client():
     return redis.Redis.from_url(REDIS_URL)
 
 
+def find_openfoam_bashrc() -> Path:
+    """Restituisce lo script d'ambiente OpenFOAM, o solleva un errore chiaro.
+
+    Prima foam_command faceva `source ... || true` a occhi chiusi: se il
+    percorso in OPENFOAM_BASHRC non esisteva (i pacchetti .deb ESI
+    installano di norma in /usr/lib/openfoam/openfoamXXXX, non in /opt) il
+    `source` falliva in silenzio e il primo comando (blockMesh) usciva con
+    "command not found" (codice 127) - il tipico "meshing fail" senza
+    spiegazione. Ora si prova prima il percorso configurato, poi le
+    posizioni standard, e se non c'e' nulla l'errore dice cosa cercare."""
+    candidates = [Path(OPENFOAM_BASHRC)]
+    for pattern in ("usr/lib/openfoam/openfoam*/etc/bashrc", "opt/openfoam*/etc/bashrc"):
+        candidates.extend(sorted(Path("/").glob(pattern), reverse=True))
+
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+
+    raise RuntimeError(
+        f"Ambiente OpenFOAM non trovato: {OPENFOAM_BASHRC} non esiste e nessuna "
+        "installazione in /usr/lib/openfoam o /opt. Controlla OPENFOAM_BASHRC "
+        "nel .env e che l'immagine del worker sia stata costruita "
+        "correttamente (docker compose build worker)."
+    )
+
+
 def foam_command(args):
     return [
         "/bin/bash",
         "-lc",
         'source "$1" >/dev/null 2>&1 || true; shift; exec "$@"',
         "openfoam-runner",
-        OPENFOAM_BASHRC,
+        str(find_openfoam_bashrc()),
         *args,
     ]
 
@@ -85,33 +111,46 @@ def run_step(task, job_id, case_dir, step_name, args, timeout_seconds=None):
 
         ACTIVE_PROCESSES[job_id] = proc
 
-        while True:
-            if r.get(f"cancel:{job_id}"):
-                kill_process_group(proc)
-                raise RuntimeError(f"Job annullato durante {step_name}")
+        try:
+            while True:
+                if r.get(f"cancel:{job_id}"):
+                    kill_process_group(proc)
+                    raise RuntimeError(f"Job annullato durante {step_name}")
 
-            if time.time() > deadline:
-                kill_process_group(proc)
-                raise RuntimeError(f"Timeout durante {step_name}")
+                if time.time() > deadline:
+                    kill_process_group(proc)
+                    raise RuntimeError(f"Timeout durante {step_name}")
 
-            try:
-                rc = proc.wait(timeout=1)
-                break
-            except subprocess.TimeoutExpired:
-                continue
-
-    ACTIVE_PROCESSES.pop(job_id, None)
+                try:
+                    rc = proc.wait(timeout=1)
+                    break
+                except subprocess.TimeoutExpired:
+                    continue
+        finally:
+            # prima veniva rimosso solo sul percorso di successo: su
+            # annullamento/timeout il processo restava per sempre nel dict
+            ACTIVE_PROCESSES.pop(job_id, None)
 
     if rc != 0:
         tail = "\n".join(log_path.read_text(errors="ignore").splitlines()[-80:])
         raise RuntimeError(f"Step {step_name} fallito con codice {rc}\n{tail}")
 
 
+_TIME_DIR = re.compile(r"^[0-9]+(\.[0-9]+)?([eE][-+]?[0-9]+)?$")
+
+
 def clean_case(case_dir: Path):
+    """Rimuove i risultati di una run precedente, NON le condizioni iniziali.
+
+    Bug corretto: il pattern "[0-9]*" cancellava anche la cartella `0/`,
+    cioe' i campi iniziali (U, p, k, ...) che l'API scrive quando si salva
+    la configurazione. Con `clean_start` di default True, ogni run
+    partiva senza condizioni iniziali e il solver moriva con
+    "cannot find file 0/U". Le cartelle dei tempi da rimuovere sono
+    quelle numeriche con valore diverso da 0."""
     patterns = [
         "processor*",
         "log.*",
-        "[0-9]*",
         "constant/polyMesh",
         "VTK",
     ]
@@ -122,6 +161,10 @@ def clean_case(case_dir: Path):
                 p.unlink()
             elif p.is_dir():
                 shutil.rmtree(p)
+
+    for p in case_dir.iterdir():
+        if p.is_dir() and _TIME_DIR.match(p.name) and float(p.name) != 0.0:
+            shutil.rmtree(p)
 
 
 def parse_residuals(case_dir: Path):
@@ -185,6 +228,49 @@ def parse_check_mesh(case_dir: Path):
     return report
 
 
+def check_mesh_inputs(case_dir: Path, mesh: dict, mesh_type: str) -> None:
+    """Controlla PRIMA di lanciare OpenFOAM che i file necessari esistano.
+
+    Ogni errore qui sotto, in passato, arrivava come un fallimento
+    criptico di blockMesh/snappyHexMesh ("cannot find file ...", codice
+    di uscita 1) dopo aver gia' pulito il caso. Qui il messaggio dice
+    cosa manca e come rimediare."""
+    if mesh_type not in ("blockMesh", "snappyHexMesh"):
+        raise RuntimeError(
+            f"mesh_type non supportato: {mesh_type!r} (valori ammessi: "
+            "blockMesh, snappyHexMesh)"
+        )
+
+    if not (case_dir / "system/blockMeshDict").is_file():
+        raise RuntimeError(
+            "system/blockMeshDict mancante: salva di nuovo la configurazione "
+            "del caso per rigenerare i file OpenFOAM."
+        )
+
+    if mesh_type != "snappyHexMesh":
+        return
+
+    stl_file = mesh.get("stl_file") or ""
+    if not stl_file:
+        raise RuntimeError(
+            "mesh_type snappyHexMesh ma nessun file STL selezionato "
+            "(mesh.stl_file vuoto): carica una geometria e selezionala."
+        )
+
+    stl_path = case_dir / "constant/triSurface" / Path(stl_file).name
+    if not stl_path.is_file():
+        raise RuntimeError(
+            f"File STL {Path(stl_file).name!r} non trovato in "
+            "constant/triSurface: caricalo di nuovo."
+        )
+
+    if not (case_dir / "system/snappyHexMeshDict").is_file():
+        raise RuntimeError(
+            "system/snappyHexMeshDict mancante: salva di nuovo la "
+            "configurazione del caso per rigenerarlo."
+        )
+
+
 def _generate_mesh(self, job_id: str, case_dir: Path, config: dict) -> dict:
     """Meshing + checkMesh + preview WebGL: fattorizzato fuori da
     run_openfoam_case perche' serve anche al job "solo mesh" (l'utente
@@ -214,23 +300,22 @@ def _generate_mesh_locked(self, job_id: str, case_dir: Path, config: dict) -> di
     mesh = config.get("mesh", {})
     run_settings = config.get("run", {})
 
+    mesh_type = mesh.get("mesh_type", "blockMesh")
+    check_mesh_inputs(case_dir, mesh, mesh_type)
+
     if run_settings.get("clean_start", True):
         clean_case(case_dir)
 
-    mesh_type = mesh.get("mesh_type", "blockMesh")
-
-    if mesh_type == "blockMesh":
-        run_step(self, job_id, case_dir, "blockMesh", ["blockMesh"])
+    run_step(self, job_id, case_dir, "blockMesh", ["blockMesh"])
 
     if mesh_type == "snappyHexMesh":
-        stl_dir = case_dir / "constant/triSurface"
-        stl_files = list(stl_dir.glob("*.stl"))
-
-        if not stl_files:
-            raise RuntimeError("Nessun file STL trovato in constant/triSurface")
-
-        run_step(self, job_id, case_dir, "blockMesh", ["blockMesh"])
-        run_step(self, job_id, case_dir, "surfaceFeatureExtract", ["surfaceFeatureExtract"])
+        # ponytail: qui c'era anche un passo `surfaceFeatureExtract`. Il
+        # generatore (templates_generator.py) non scrive mai
+        # system/surfaceFeatureExtractDict e snappyHexMeshDict ha
+        # `features ( )` vuoto: il passo non poteva che fallire con "cannot
+        # find file", senza produrre nulla che snappyHexMesh usasse. Se in
+        # futuro si aggiunge il feature-snapping, va aggiunto insieme al
+        # dict e ai riferimenti .eMesh, non prima.
         run_step(self, job_id, case_dir, "snappyHexMesh", ["snappyHexMesh", "-overwrite"])
 
     run_step(self, job_id, case_dir, "checkMesh", ["checkMesh"])
@@ -336,7 +421,16 @@ def run_openfoam_case(self, case_id):
     if not (1 <= processors <= MAX_PROCESSORS):
         raise ValueError(f"processors fuori range (1-{MAX_PROCESSORS}): {processors}")
 
-    _generate_mesh(self, job_id, case_dir, config)
+    mesh_report = _generate_mesh(self, job_id, case_dir, config)
+
+    # ponytail: _generate_mesh restituisce (senza sollevare) quando la mesh
+    # e' inutilizzabile, cosi' il job "solo mesh" puo' mostrare il motivo.
+    # Ma una run completa non deve proseguire: prima lanciava comunque
+    # decomposePar/solver su una mesh a 0 celle, con un errore molto piu'
+    # criptico e minuti/ore dopo.
+    if not mesh_report.get("mesh_valid", False):
+        issues = "; ".join(mesh_report.get("quality_issues") or ["mesh non valida"])
+        raise RuntimeError(f"Mesh non valida, simulazione non avviata: {issues}")
 
     if processors > 1:
         run_step(self, job_id, case_dir, "decomposePar", ["decomposePar", "-force"])

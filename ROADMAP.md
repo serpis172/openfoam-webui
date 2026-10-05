@@ -28,6 +28,7 @@ una riga di codice specifici.
 3. [Metodologia](#3-metodologia)
 4. [Audit tecnico prioritizzato](#4-audit-tecnico-prioritizzato)
 5. [Fix già applicati in questa sessione](#5-fix-già-applicati-in-questa-sessione)
+   - [5-bis. Terza riconciliazione: meshing, setup e CI](#5-bis-terza-riconciliazione-meshing-setup-e-ci-sessione-di-settembre-2026)
 6. [Repository di riferimento — cosa prendere da ciascuna](#6-repository-di-riferimento--cosa-prendere-da-ciascuna)
 7. [Roadmap a fasi](#7-roadmap-a-fasi)
 8. [Checklist di verifica finale](#8-checklist-di-verifica-finale)
@@ -203,7 +204,7 @@ tracciabilità dell'audit completo.
 | T3 | `tsconfig.json` ha `noUnusedLocals: false` e `noUnusedParameters: false` — disabilitati, probabilmente per evitare di rompere la build su codice esistente. Questo è in parte la causa strutturale di D4/P1/P2: niente segnala import o variabili morte finché non le cerchi a mano. | `frontend/tsconfig.json` | 2 | 1 | 3 | 3 |
 | T4 | **[FATTO]** La CI (`ci.yml`) eseguiva `pytest` solo su `backend/tests/` — `worker/tests/` (33 test, incluse le due voci M2/M7 sopra) non girava mai in CI, solo manualmente. Un contributor poteva rompere `file_locking.py`/`mesh_validation.py` senza che nessun check se ne accorgesse. Aggiunto un job `worker` dedicato in `ci.yml`. | `.github/workflows/ci.yml` | 3 | 2 | 1 | 15 |
 | T5 | **[FATTO]** `mesh_validation.py::format_mesh_report` — `f"{metrics.get('cells', 'N/A'):,}"`: lo spec di formattazione `:,` (migliaia) applicato al fallback stringa `"N/A"` solleva `ValueError` non appena una metrica manca dal report. 3 test (già scritti, mai passati) lo confermavano. | `worker/mesh_validation.py` | 3 | 1 | 1 | 12 |
-| T6 | **[FATTO]** Nessun test eseguiva mai `blockMesh`/`checkMesh` reali — ogni verifica su B0/write_U si fermava a "il parser di foamlib lo legge" o "inizia con FoamFile", mai un binario OpenFOAM vero. Aggiunto il job CI `openfoam-integration` (Sezione 5, riconciliazione). | `.github/workflows/ci.yml` | 4 | 3 | 2 | 21 |
+| T6 | **[FATTO — ma solo dalla Sezione 5-bis: il job dichiarato qui non era mai stato committato]** Nessun test eseguiva mai `blockMesh`/`checkMesh` reali — ogni verifica su B0/write_U si fermava a "il parser di foamlib lo legge" o "inizia con FoamFile", mai un binario OpenFOAM vero. Aggiunto il job CI `openfoam-integration` (Sezione 5, riconciliazione). | `.github/workflows/ci.yml` | 4 | 3 | 2 | 21 |
 
 ### 4.7 Documentazione
 
@@ -547,6 +548,64 @@ collegati); YAML della CI validato con `python3 -c "import yaml; ..."`.
 runner GitHub Actions qui per eseguirlo, solo la sintassi YAML e la
 logica Python che genera i case sono state controllate in locale. La
 prima esecuzione reale sarà al prossimo push.
+
+---
+
+## 5-bis. Terza riconciliazione: meshing, setup e CI (sessione di settembre 2026)
+
+Sessione dedicata a "il meshing dà spesso errori". Metodo: riclonato il repo
+aggiornato, letto il percorso completo upload → mesh → run riga per riga,
+scritto un test per ogni difetto trovato e verificato che **fallisse sul
+codice vecchio** prima di correggerlo.
+
+**Correzione di una dichiarazione errata di questo documento.** La
+Sezione 5 e la voce T6 dicevano che il job CI `openfoam-integration` era
+stato aggiunto. Non era vero: `.github/workflows/ci.yml` non lo conteneva
+(il commit `33265fc` modificava altri file). Nessun `blockMesh` reale è mai
+stato eseguito dalla CI. Ora esiste davvero, insieme a un job `worker`
+(la suite worker esisteva ma la CI non la eseguiva).
+
+Difetti trovati e corretti, dal più al meno grave:
+
+| # | Difetto | Effetto per l'utente | Dove |
+|---|---|---|---|
+| M1 | `clean_case` usava il pattern `[0-9]*`, che cancella anche `0/` | con `clean_start` (default `True`) ogni run partiva senza condizioni iniziali: "cannot find file 0/U" | `worker/tasks.py` |
+| M2 | `run_openfoam_case` ignorava `mesh_valid` | su mesh a 0 celle partivano comunque decomposePar e solver, con errore criptico ore dopo | `worker/tasks.py` |
+| M3 | Il passo `surfaceFeatureExtract` girava senza che `system/surfaceFeatureExtractDict` fosse mai generato (e `features ( )` è vuoto) | ogni mesh `snappyHexMesh` falliva a quel passo | `worker/tasks.py` |
+| M4 | Il patch della geometria in `snappyHexMeshDict` si chiamava sempre `geometry`; le boundary condition usano il nome del file STL | mesh generata, poi solver: "Cannot find patchField entry" | `templates_generator.py` |
+| M5 | `snapControls` conteneva `explicitFeatures` (keyword inesistente) invece delle vere `implicitFeatureSnap`/`explicitFeatureSnap` | rischio di errore "keyword undefined" a seconda della versione di OpenFOAM | `templates_generator.py` |
+| M6 | `source $OPENFOAM_BASHRC \|\| true` nascondeva l'errore se il percorso era sbagliato | "blockMesh: command not found" (rc 127) senza spiegazione | `worker/tasks.py`, `worker/Dockerfile` |
+| M7 | Nessun controllo dei file richiesti prima di lanciare OpenFOAM | messaggi "cannot find file ..." dopo aver già pulito il caso | `worker/tasks.py` (`check_mesh_inputs`) |
+| M8 | `MeshSettings` accettava `cells=[0,..]`, dominio invertito, `location_in_mesh` fuori dominio | mesh a 0 celle o errore 500 dal generatore | `models.py` |
+| S1 | `command -v docker compose` controlla solo `docker` | il plugin Compose non veniva mai verificato | `scripts/setup.sh` |
+| S2 | `REDIS_URL` duplicava la password di `REDIS_PASSWORD` nel `.env` | password cambiata in una riga sola: ogni job fallisce con "Authentication required" | `docker-compose.yml` |
+| S3 | `make clean` faceva `docker compose down -v` senza conferma | cancellava il volume con tutti i casi | `Makefile` |
+| S4 | `frontend/dist` creata da root (bind mount) | `EACCES` al build del frontend | `scripts/setup.sh` (ora lo rileva e spiega) |
+| D1 | `backend/app/mesh_validation.py` mai importato, già divergente dalla copia del worker | codice morto + test che provavano la copia sbagliata | rimosso (unica copia: `worker/mesh_validation.py`) |
+| D2 | `backend/test/` e `.github/workflow/` rimasti nel repo dopo il fix precedente | test obsoleti raccolti da `pytest` nudo; workflow ignorato da GitHub | rimossi |
+
+**Non verificato — leggere prima di fidarsi (ambiente senza Docker né OpenFOAM):**
+
+- Nessuno dei fix M3–M6 è stato eseguito contro OpenFOAM reale. Sono
+  ricavati dalla lettura del codice e dalla conoscenza dei dict OpenFOAM;
+  sono coperti da test sul *contenuto generato* (`test_snappy_dict.py`) e
+  da `backend/tests/integration/`, che li verifica con binari veri **solo
+  quando gira il job CI `openfoam-integration`**. Se quel job è rosso, il
+  log nel messaggio del test dice quale dict OpenFOAM rifiuta: è il dato
+  più utile di questa sessione.
+- M4 assume che, per un STL con una sola regione, snappyHexMesh chiami il
+  patch come la geometria (`name`). Il test
+  `test_snappyhexmesh_creates_patch_named_like_stl` lo verifica.
+- M6: che i pacchetti `.deb` ESI installino in `/usr/lib/openfoam/openfoam2406`
+  (e non in `/opt`) è una mia aspettativa, non un fatto controllato: il
+  `worker/Dockerfile` ora prova entrambe le posizioni e **fa fallire il build**
+  se `blockMesh` non parte, così l'errore emerge subito e con un messaggio.
+- `worker/Dockerfile` e `docker-compose.yml` non sono stati costruiti/avviati
+  (nessun Docker qui): solo sintassi YAML e shell verificate.
+
+Test dopo questa sessione: backend **59 passati + 4 saltati** (i 4 sono i
+test di integrazione, senza OpenFOAM), worker **46 passati** (erano 33, e la
+CI non li eseguiva).
 
 ---
 

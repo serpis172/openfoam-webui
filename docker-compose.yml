@@ -21,6 +21,10 @@ services:
     environment:
       - DATA_ROOT=/data
       - STATIC_DIR=/app/static
+      # derivata da REDIS_PASSWORD: prima andava tenuta uguale a mano in
+      # due righe del .env, e una password cambiata solo in una delle due
+      # faceva fallire ogni job con "Authentication required"
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379/0
     volumes:
       - cases:/data
       - ./frontend/dist:/app/static:ro
@@ -48,6 +52,7 @@ services:
       - .env
     environment:
       - CASE_ROOT=/data/cases
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379/0
     volumes:
       - cases:/data
     depends_on:

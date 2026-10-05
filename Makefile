@@ -29,5 +29,7 @@ backup:
 	bash scripts/backup.sh
 
 clean:
+	@echo "ATTENZIONE: rimuove i volumi Docker, inclusi TUTTI i casi di simulazione."
+	@read -p "Scrivi 'si' per confermare: " ans && [ "$$ans" = "si" ]
 	docker compose down -v
 	rm -rf frontend/dist frontend/node_modules
