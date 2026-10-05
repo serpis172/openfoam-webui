@@ -434,6 +434,13 @@ mergePatchPairs
 
 def generate_snappy_hex_mesh_dict(case_dir: Path, config: CaseConfig):
     stl_name = Path(config.mesh.stl_file).name
+    # ponytail: il patch che snappyHexMesh crea dalla superficie prende il
+    # nome della geometria (`name`). Prima era hardcoded "geometry", mentre
+    # models.py::_available_patches e le boundary condition usano
+    # Path(stl_file).stem: la mesh aveva un patch "geometry", 0/U e 0/p ne
+    # descrivevano uno chiamato come il file, e il solver si fermava con
+    # "Cannot find patchField entry". Un solo nome, qui e nel modello.
+    surface_name = Path(config.mesh.stl_file).stem
     location = foam_vector(config.mesh.location_in_mesh)
     level = config.mesh.surface_refinement
 
@@ -481,7 +488,7 @@ geometry
     {stl_name}
     {{
         type triSurfaceMesh;
-        name geometry;
+        name {surface_name};
     }}
 {box_geometry_entries}}};
 
@@ -499,7 +506,7 @@ castellatedMeshControls
 
     refinementSurfaces
     {{
-        geometry
+        {surface_name}
         {{
             level ({level} {level});
         }}
@@ -523,7 +530,8 @@ snapControls
     nSolveIter      30;
     nRelaxIter      5;
     nFeatureSnapIter 10;
-    explicitFeatures false;
+    implicitFeatureSnap false;
+    explicitFeatureSnap false;
 }}
 
 addLayersControls
@@ -532,7 +540,7 @@ addLayersControls
 
     layers
     {{
-        geometry
+        {surface_name}
         {{
             nSurfaceLayers {config.mesh.layers};
         }}

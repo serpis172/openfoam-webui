@@ -209,6 +209,39 @@ class MeshSettings(BaseModel):
             distances_seen.add(item.distance)
         return sorted(v, key=lambda item: item.distance)
 
+    @model_validator(mode="after")
+    def check_domain_and_cells(self):
+        """Errori di geometria del dominio individuati subito, con un
+        messaggio leggibile, invece che dentro blockMesh/snappyHexMesh
+        (o come IndexError/500 nel generatore) dopo aver messo in coda un
+        job. Il caso piu' frequente in pratica: `location_in_mesh` di
+        default (0, 0, 0) cade DENTRO la geometria (o fuori dal dominio) e
+        snappyHexMesh produce una mesh a 0 celle."""
+        for name in ("domain_min", "domain_max", "cells", "location_in_mesh"):
+            if len(getattr(self, name)) != 3:
+                raise ValueError(f"{name} deve avere esattamente 3 componenti (x, y, z)")
+
+        if any(c < 1 for c in self.cells):
+            raise ValueError(f"cells: servono almeno 1 cella per direzione, ricevuto {self.cells}")
+
+        for axis, lo, hi in zip("xyz", self.domain_min, self.domain_max):
+            if hi <= lo:
+                raise ValueError(
+                    f"domain_max deve essere maggiore di domain_min lungo {axis} ({hi} <= {lo})"
+                )
+
+        if self.mesh_type == "snappyHexMesh":
+            for axis, lo, hi, point in zip(
+                "xyz", self.domain_min, self.domain_max, self.location_in_mesh
+            ):
+                if not lo < point < hi:
+                    raise ValueError(
+                        f"location_in_mesh ({point}) e' fuori dal dominio lungo {axis} "
+                        f"[{lo}, {hi}]: deve essere un punto nel fluido, dentro il dominio "
+                        "e fuori dalla geometria"
+                    )
+        return self
+
     @field_validator("refinement_boxes")
     @classmethod
     def unique_box_names(cls, v: List["RefinementBox"]) -> List["RefinementBox"]:
